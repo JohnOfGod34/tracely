@@ -23,14 +23,14 @@ services:
     build:
       context: ./app
       dockerfile: Dockerfile
-    volumes:
-      - ./app:/app
-      - /app/node_modules
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
     expose:
       - "3000"
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000
-      API_URL: http://api:8000
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+      API_URL: ${API_URL:-http://api:8000}
     depends_on:
       api:
         condition: service_started
