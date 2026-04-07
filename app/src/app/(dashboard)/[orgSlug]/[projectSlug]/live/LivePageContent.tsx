@@ -4,7 +4,7 @@ import { Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, use
 import { useParams, useSearchParams } from "next/navigation";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { motion, AnimatePresence } from "framer-motion";
-import { Wifi, WifiOff, ArrowDown, Check, Copy, Terminal, Code, BookOpen, RefreshCw, Clock, Search, ChevronDown } from "lucide-react";
+import { Wifi, WifiOff, ArrowDown, Check, Copy, Terminal, Code, BookOpen, RefreshCw, Clock, Search, ChevronDown, AlertTriangle } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { DataEnvelope } from "@/types/api";
@@ -253,6 +253,10 @@ function LiveHeader({
   status,
   spanCount,
   isHistorical,
+  customStartDate,
+  customEndDate,
+  errorsOnly,
+  onToggleErrorsOnly,
   onTimePreset,
   onCustomStart,
   onCustomEnd,
@@ -260,9 +264,13 @@ function LiveHeader({
   status: "connecting" | "connected" | "disconnected";
   spanCount: number;
   isHistorical?: boolean;
+  customStartDate: string;
+  customEndDate: string;
+  errorsOnly: boolean;
+  onToggleErrorsOnly: () => void;
   onTimePreset: (preset: TimeRangePreset) => void;
-  onCustomStart: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  onCustomEnd: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onCustomStart: (value: string) => void;
+  onCustomEnd: (value: string) => void;
 }) {
   const filters = useFilterStore((s) => s.filters);
   const [searchExpanded, setSearchExpanded] = useState(false);
@@ -385,20 +393,38 @@ function LiveHeader({
       {filters.timeRange.preset === "custom" && (
         <div className="flex items-center gap-1" data-testid="header-custom-range">
           <input
-            type="datetime-local"
-            onChange={onCustomStart}
+            type="date"
+            value={customStartDate}
+            onChange={(e) => onCustomStart(e.target.value)}
             className="h-7 rounded-md border bg-background px-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
             data-testid="header-custom-start"
           />
           <span className="text-xs text-muted-foreground">to</span>
           <input
-            type="datetime-local"
-            onChange={onCustomEnd}
+            type="date"
+            value={customEndDate}
+            onChange={(e) => onCustomEnd(e.target.value)}
             className="h-7 rounded-md border bg-background px-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
             data-testid="header-custom-end"
           />
         </div>
       )}
+
+      <button
+        type="button"
+        onClick={onToggleErrorsOnly}
+        className={cn(
+          "inline-flex h-7 items-center gap-1 rounded-md border px-2 text-xs transition-colors",
+          errorsOnly
+            ? "border-red-500/40 bg-red-500/10 text-red-500 hover:bg-red-500/15"
+            : "border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground"
+        )}
+        data-testid="header-errors-only"
+        title="Show only 4xx/5xx requests"
+      >
+        <AlertTriangle className="size-3.5" />
+        Errors
+      </button>
 
       {/* Spacer */}
       <div className="flex-1" />
@@ -546,20 +572,47 @@ function LivePageInner() {
   );
 
   const handleCustomStart = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const iso = e.target.value ? new Date(e.target.value).toISOString() : undefined;
+    (value: string) => {
+      const iso = value
+        ? new Date(`${value}T00:00:00`).toISOString()
+        : undefined;
       setTimeRange({ preset: "custom", start: iso, end: filters.timeRange.end });
     },
     [setTimeRange, filters.timeRange.end]
   );
 
   const handleCustomEnd = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const iso = e.target.value ? new Date(e.target.value).toISOString() : undefined;
+    (value: string) => {
+      const iso = value
+        ? new Date(`${value}T23:59:59.999`).toISOString()
+        : undefined;
       setTimeRange({ preset: "custom", start: filters.timeRange.start, end: iso });
     },
     [setTimeRange, filters.timeRange.start]
   );
+
+  const errorsOnly = filters.statusGroups.includes("4xx") && filters.statusGroups.includes("5xx");
+
+  const toggleErrorsOnly = useCallback(() => {
+    const current = useFilterStore.getState().filters.statusGroups;
+    const active = current.includes("4xx") && current.includes("5xx");
+    useFilterStore.setState((state) => ({
+      filters: {
+        ...state.filters,
+        statusGroups: active ? [] : ["4xx", "5xx"],
+      },
+    }));
+  }, []);
+
+  const formatDateForInput = useCallback((iso?: string) => {
+    if (!iso) return "";
+    const d = new Date(iso);
+    const local = new Date(d.getTime() - d.getTimezoneOffset() * 60_000);
+    return local.toISOString().slice(0, 10);
+  }, []);
+
+  const customStartDate = formatDateForInput(filters.timeRange.start);
+  const customEndDate = formatDateForInput(filters.timeRange.end);
 
   // Filter root spans only (children inherit parent visibility)
   const filteredRootSpans = useMemo(
@@ -617,6 +670,7 @@ function LivePageInner() {
     const start = searchParams.get("start");
     const end = searchParams.get("end");
     const env = searchParams.get("env");
+    const errors = searchParams.get("errors");
 
     const store = useFilterStore.getState();
     if (time) {
@@ -630,6 +684,11 @@ function LivePageInner() {
       }
     }
     if (env) store.setEnvironment(env);
+    if (errors === "1") {
+      useFilterStore.setState((state) => ({
+        filters: { ...state.filters, statusGroups: ["4xx", "5xx"] },
+      }));
+    }
   }, [searchParams]);
 
   // Sync filters to URL search params
@@ -639,11 +698,12 @@ function LivePageInner() {
     if (filters.timeRange.start) params.set("start", filters.timeRange.start);
     if (filters.timeRange.end) params.set("end", filters.timeRange.end);
     if (filters.environment) params.set("env", filters.environment);
+    if (errorsOnly) params.set("errors", "1");
 
     const search = params.toString();
     const newUrl = `${window.location.pathname}${search ? `?${search}` : ""}`;
     window.history.replaceState(null, "", newUrl);
-  }, [filters]);
+  }, [filters, errorsOnly]);
 
   // Reset filters on org/project switch (UX16, AC4)
   const contextKeyRef = useRef(`${orgSlug}/${projectSlug}`);
@@ -844,8 +904,11 @@ function LivePageInner() {
   const buildFilterParams = useCallback(() => {
     const params: string[] = [];
     if (filters.environment) params.push(`environment=${encodeURIComponent(filters.environment)}`);
+    if (filters.statusGroups.length > 0) {
+      params.push(`status_groups=${encodeURIComponent(filters.statusGroups.join(","))}`);
+    }
     return params.length > 0 ? `&${params.join("&")}` : "";
-  }, [filters.environment]);
+  }, [filters.environment, filters.statusGroups]);
 
   const loadHistory = useCallback(async () => {
     if (fetchingRef.current || !projectId || !hasMoreHistory) return;
@@ -1029,6 +1092,10 @@ function LivePageInner() {
         status={status}
         spanCount={filteredSpans.length}
         isHistorical={isHistoricalMode}
+        customStartDate={customStartDate}
+        customEndDate={customEndDate}
+        errorsOnly={errorsOnly}
+        onToggleErrorsOnly={toggleErrorsOnly}
         onTimePreset={handleTimePreset}
         onCustomStart={handleCustomStart}
         onCustomEnd={handleCustomEnd}

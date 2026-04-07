@@ -2,7 +2,7 @@
 
 # ── Infrastructure ──────────────────────────────────────────
 infra:
-	docker compose up -d
+	export DOCKER_API_VERSION=1.41 && docker compose -f docker-compose.yml up --build
 
 infra-down:
 	docker compose down
