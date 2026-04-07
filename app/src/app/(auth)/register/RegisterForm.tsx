@@ -58,6 +58,7 @@ export default function RegisterForm() {
           setError(err.message);
         }
       } else {
+        console.error(err);
         setError("Something went wrong. Please try again.");
       }
     } finally {
