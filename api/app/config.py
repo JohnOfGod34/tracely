@@ -14,12 +14,18 @@ class Settings(BaseSettings):
     resend_from_email: str = "noreply@tracely.sh"
     frontend_url: str = "http://localhost:3000"
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {
+        # Support local runs (api/.env) and container runs (/app/.env).
+        "env_file": (".env", "/app/.env"),
+        "env_file_encoding": "utf-8",
+    }
 
     @model_validator(mode="after")
     def _ensure_asyncpg_scheme(self) -> Settings:
         if self.database_url.startswith("postgresql://"):
-            self.database_url = self.database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+            self.database_url = self.database_url.replace(
+                "postgresql://", "postgresql+asyncpg://", 1
+            )
         return self
 
 
