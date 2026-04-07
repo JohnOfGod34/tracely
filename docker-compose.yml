@@ -9,6 +9,7 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       CLICKHOUSE_URL: ${CLICKHOUSE_URL}
       REDIS_URL: ${REDIS_URL}
+      CORS_ORIGINS: ${CORS_ORIGINS}
     depends_on:
       postgres:
         condition: service_healthy
