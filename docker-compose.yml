@@ -26,8 +26,8 @@ services:
     volumes:
       - ./app:/app
       - /app/node_modules
-    ports:
-      - "3000:3000"
+    expose:
+      - "3000"
     environment:
       NEXT_PUBLIC_API_URL: http://localhost:8000
       API_URL: http://api:8000
