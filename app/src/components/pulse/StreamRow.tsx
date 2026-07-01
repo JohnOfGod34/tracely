@@ -72,18 +72,18 @@ export const StreamRow = memo(function StreamRow({
         if (e.key === "Enter" && onClick) onClick();
       }}
       className={cn(
-        "flex items-center gap-2 px-4 py-2 text-sm font-mono border-b border-border/50 cursor-pointer transition-colors hover:bg-accent/50",
+        "flex items-center gap-2 px-3 sm:px-4 py-2 text-sm font-mono border-b border-border/50 cursor-pointer transition-colors hover:bg-accent/50",
         isPending && "opacity-70",
         isSelected && "bg-accent"
       )}
     >
       {/* Timestamp — fixed width */}
-      <span className="shrink-0 w-[60px] text-xs text-muted-foreground/70 tabular-nums">
+      <span className="hidden sm:inline-flex shrink-0 w-[60px] text-xs text-muted-foreground/70 tabular-nums">
         {!isPending ? formatTimestamp(span.start_time) : "\u00A0"}
       </span>
 
       {/* Service name — fixed width */}
-      <span className="shrink-0 w-20 text-xs text-muted-foreground/70 truncate" title={serviceName}>
+      <span className="hidden md:block shrink-0 w-20 text-xs text-muted-foreground/70 truncate" title={serviceName}>
         {serviceName}
       </span>
 

@@ -4,11 +4,11 @@ import { Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, use
 import { useParams, useSearchParams } from "next/navigation";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { motion, AnimatePresence } from "framer-motion";
-import { Wifi, WifiOff, ArrowDown, Check, Copy, Terminal, Code, BookOpen, RefreshCw, Clock, Search, ChevronDown, AlertTriangle } from "lucide-react";
+import { Wifi, WifiOff, ArrowDown, Check, Copy, Terminal, Code, BookOpen, RefreshCw, Clock, Search, ChevronDown, AlertTriangle, X } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { DataEnvelope } from "@/types/api";
-import type { SpanEvent, TimeRangePreset } from "@/types/span";
+import type { SpanEvent, StreamFilters, TimeRangePreset } from "@/types/span";
 import { useEventStream } from "@/hooks/useEventStream";
 import { useSpanDetail } from "@/hooks/useSpanDetail";
 import { useLiveStreamStore } from "@/stores/liveStreamStore";
@@ -19,6 +19,7 @@ import { ChildSpanRow } from "@/components/pulse/ChildSpanRow";
 import { SpanInspector } from "@/components/pulse/SpanInspector";
 import { TimelineBar } from "@/components/timeline";
 import { useKeyboardShortcut } from "@/hooks/useKeyboardShortcut";
+import { DateRangePicker } from "@/components/shared/DateRangePicker";
 
 type DisplayItem =
   | { type: "root"; span: SpanEvent; childCount: number; hasErrorChildren: boolean; isExpanded: boolean }
@@ -142,7 +143,8 @@ function EmptyState({ orgSlug, projectSlug }: { orgSlug: string; projectSlug: st
     }
   }, [basePath]);
 
-  // On mount: if no keys → auto-generate; if keys exist → show prefix
+  // On mount: check for existing keys and show the prefix — never create one
+  // without the user explicitly asking (AC4)
   useEffect(() => {
     if (initRef.current) return;
     initRef.current = true;
@@ -152,17 +154,16 @@ function EmptyState({ orgSlug, projectSlug }: { orgSlug: string; projectSlug: st
         const res = await apiFetch<DataEnvelope<ApiKeyItem[]>>(basePath);
         if (res.data.length > 0) {
           setKeyPrefix(res.data[0].prefix);
-        } else {
-          generateKey();
         }
       } catch {
         // Non-blocking
       }
     }
     init();
-  }, [basePath, generateKey]);
+  }, [basePath]);
 
   const hasFullKey = fullKey !== null;
+  const hasAnyKey = hasFullKey || keyPrefix !== null;
   const displayKey = fullKey ?? (keyPrefix ? `${keyPrefix}...` : "your_api_key_here");
   const installSnippet = `pip install tracely-sdk
 export TRACELY_API_KEY="${displayKey}"`;
@@ -198,7 +199,20 @@ tracely.init()  # reads TRACELY_API_KEY from env`;
               </button>
             )}
           </div>
-          <CodeBlock code={installSnippet} language="shell" />
+          {hasAnyKey ? (
+            <CodeBlock code={installSnippet} language="shell" />
+          ) : (
+            <div className="flex justify-center rounded-lg border bg-muted/50 p-4">
+              <button
+                onClick={generateKey}
+                disabled={regenerating}
+                className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+              >
+                <RefreshCw className={cn("size-3.5", regenerating && "animate-spin")} />
+                {regenerating ? "Generating..." : "Generate API key"}
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="space-y-1.5">
@@ -247,33 +261,46 @@ function formatMetricValue(value: number, decimals = 1): string {
   return value.toFixed(decimals);
 }
 
+function errorRateColorClass(rate: number): string {
+  if (rate >= 5) return "text-red-500";
+  if (rate >= 1) return "text-amber-500";
+  return "text-emerald-500";
+}
+
+function p95ColorClass(ms: number): string {
+  if (ms >= 2000) return "text-red-500";
+  if (ms >= 500) return "text-amber-500";
+  return "text-emerald-500";
+}
+
+function formatP95(ms: number): string {
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`;
+}
+
 // --- Live Header (40px, AC1 UX12, Story 11.2, Story 4.1 Health) ---
 
 function LiveHeader({
   status,
   spanCount,
   isHistorical,
-  customStartDate,
-  customEndDate,
-  errorsOnly,
-  onToggleErrorsOnly,
   onTimePreset,
-  onCustomStart,
-  onCustomEnd,
+  onCustomRangeChange,
 }: {
   status: "connecting" | "connected" | "disconnected";
   spanCount: number;
   isHistorical?: boolean;
-  customStartDate: string;
-  customEndDate: string;
-  errorsOnly: boolean;
-  onToggleErrorsOnly: () => void;
   onTimePreset: (preset: TimeRangePreset) => void;
-  onCustomStart: (value: string) => void;
-  onCustomEnd: (value: string) => void;
+  onCustomRangeChange: (start: string, end: string) => void;
 }) {
   const filters = useFilterStore((s) => s.filters);
+  const setEndpointSearch = useFilterStore((s) => s.setEndpointSearch);
+  const toggleStatusGroup = useFilterStore((s) => s.toggleStatusGroup);
   const [searchExpanded, setSearchExpanded] = useState(false);
+
+  // Custom range with only one bound picked — historical mode won't activate yet (AC5)
+  const isCustomRangeIncomplete =
+    filters.timeRange.preset === "custom" &&
+    !!filters.timeRange.start !== !!filters.timeRange.end;
 
   // Real-time metrics from live span stream (instant reactivity)
   const spans = useLiveStreamStore((s) => s.spans);
@@ -331,17 +358,27 @@ function LiveHeader({
 
   return (
     <div className="sticky top-0 z-10 flex h-10 items-center gap-2 border-b bg-background/95 px-4 backdrop-blur-sm">
-      {/* Search input (non-functional, AC1) */}
+      {/* Search input (AC1) */}
       <div className="hidden md:block">
         <div className="relative">
           <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <input
             type="text"
-            placeholder="Search with filters..."
-            readOnly
-            className="h-7 min-w-[250px] max-w-[400px] rounded-md border bg-background pl-8 pr-3 text-xs text-muted-foreground placeholder:text-muted-foreground/50 focus:outline-none"
+            placeholder="Search endpoint path..."
+            value={filters.endpointSearch}
+            onChange={(e) => setEndpointSearch(e.target.value)}
+            className="h-7 min-w-[250px] max-w-[400px] rounded-md border bg-background pl-8 pr-7 text-xs text-foreground placeholder:text-muted-foreground/50 focus:outline-none"
             data-testid="header-search"
           />
+          {filters.endpointSearch !== "" && (
+            <button
+              onClick={() => setEndpointSearch("")}
+              className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-foreground"
+              aria-label="Clear search"
+            >
+              <X className="size-3.5" />
+            </button>
+          )}
         </div>
       </div>
       {/* Mobile: search icon button */}
@@ -357,13 +394,25 @@ function LiveHeader({
       {searchExpanded && (
         <div className="absolute left-0 top-10 z-20 flex w-full items-center gap-2 border-b bg-background px-4 py-2 md:hidden">
           <Search className="size-3.5 shrink-0 text-muted-foreground" />
-          <input
-            type="text"
-            placeholder="Search with filters..."
-            readOnly
-            autoFocus
-            className="h-7 flex-1 rounded-md border bg-background px-3 text-xs text-muted-foreground placeholder:text-muted-foreground/50 focus:outline-none"
-          />
+          <div className="relative flex-1">
+            <input
+              type="text"
+              placeholder="Search endpoint path..."
+              value={filters.endpointSearch}
+              onChange={(e) => setEndpointSearch(e.target.value)}
+              autoFocus
+              className="h-7 w-full rounded-md border bg-background px-3 pr-7 text-xs text-foreground placeholder:text-muted-foreground/50 focus:outline-none"
+            />
+            {filters.endpointSearch !== "" && (
+              <button
+                onClick={() => setEndpointSearch("")}
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-foreground"
+                aria-label="Clear search"
+              >
+                <X className="size-3.5" />
+              </button>
+            )}
+          </div>
           <button
             onClick={() => setSearchExpanded(false)}
             className="text-xs text-muted-foreground hover:text-foreground"
@@ -389,47 +438,62 @@ function LiveHeader({
         <ChevronDown className="pointer-events-none absolute right-1.5 top-1/2 size-3 -translate-y-1/2 text-muted-foreground" />
       </div>
 
-      {/* Custom time range inputs */}
+      {/* Custom time range picker */}
       {filters.timeRange.preset === "custom" && (
-        <div className="flex items-center gap-1" data-testid="header-custom-range">
-          <input
-            type="date"
-            value={customStartDate}
-            onChange={(e) => onCustomStart(e.target.value)}
-            className="h-7 rounded-md border bg-background px-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
-            data-testid="header-custom-start"
+        <div data-testid="header-custom-range">
+          <DateRangePicker
+            start={filters.timeRange.start}
+            end={filters.timeRange.end}
+            onApply={onCustomRangeChange}
           />
-          <span className="text-xs text-muted-foreground">to</span>
-          <input
-            type="date"
-            value={customEndDate}
-            onChange={(e) => onCustomEnd(e.target.value)}
-            className="h-7 rounded-md border bg-background px-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
-            data-testid="header-custom-end"
-          />
+          {isCustomRangeIncomplete && (
+            <div
+              className="absolute left-0 top-10 z-20 w-full border-b bg-amber-500/10 px-4 py-1 text-xs text-amber-700"
+              data-testid="header-custom-range-hint"
+            >
+              Pick a start and end date to view historical data.
+            </div>
+          )}
         </div>
       )}
 
-      <button
-        type="button"
-        onClick={onToggleErrorsOnly}
-        className={cn(
-          "inline-flex h-7 items-center gap-1 rounded-md border px-2 text-xs transition-colors",
-          errorsOnly
-            ? "border-red-500/40 bg-red-500/10 text-red-500 hover:bg-red-500/15"
-            : "border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground"
-        )}
-        data-testid="header-errors-only"
-        title="Show only 4xx/5xx requests"
-      >
-        <AlertTriangle className="size-3.5" />
-        Errors
-      </button>
+      {/* Status code filters — 4xx and 5xx toggle independently (AC1) */}
+      <div className="flex items-center gap-1">
+        <AlertTriangle className="size-3.5 text-muted-foreground" />
+        <button
+          type="button"
+          onClick={() => toggleStatusGroup("4xx")}
+          className={cn(
+            "inline-flex h-7 items-center rounded-md border px-2 text-xs transition-colors",
+            filters.statusGroups.includes("4xx")
+              ? "border-amber-500/40 bg-amber-500/10 text-amber-600 hover:bg-amber-500/15"
+              : "border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground"
+          )}
+          data-testid="header-4xx-only"
+          title="Show only 4xx client errors"
+        >
+          4xx
+        </button>
+        <button
+          type="button"
+          onClick={() => toggleStatusGroup("5xx")}
+          className={cn(
+            "inline-flex h-7 items-center rounded-md border px-2 text-xs transition-colors",
+            filters.statusGroups.includes("5xx")
+              ? "border-red-500/40 bg-red-500/10 text-red-500 hover:bg-red-500/15"
+              : "border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground"
+          )}
+          data-testid="header-5xx-only"
+          title="Show only 5xx server errors"
+        >
+          5xx
+        </button>
+      </div>
 
       {/* Spacer */}
       <div className="flex-1" />
 
-      {/* Metrics row (Story 4.1) */}
+      {/* Metrics row (Story 4.1) — full row on wide screens */}
       {aggregatedMetrics && !healthLoading && (
         <div className="hidden lg:flex items-center gap-3 text-xs" data-testid="header-metrics">
           <div className="flex items-center gap-1.5">
@@ -438,26 +502,29 @@ function LiveHeader({
           </div>
           <div className="flex items-center gap-1.5">
             <span className="text-muted-foreground">error</span>
-            <span className={cn(
-              "font-medium tabular-nums",
-              aggregatedMetrics.avgErrorRate >= 5 ? "text-red-500" :
-              aggregatedMetrics.avgErrorRate >= 1 ? "text-amber-500" : "text-emerald-500"
-            )}>
+            <span className={cn("font-medium tabular-nums", errorRateColorClass(aggregatedMetrics.avgErrorRate))}>
               {aggregatedMetrics.avgErrorRate.toFixed(1)}%
             </span>
           </div>
           <div className="flex items-center gap-1.5">
             <span className="text-muted-foreground">p95</span>
-            <span className={cn(
-              "font-medium tabular-nums",
-              aggregatedMetrics.maxP95 >= 2000 ? "text-red-500" :
-              aggregatedMetrics.maxP95 >= 500 ? "text-amber-500" : "text-emerald-500"
-            )}>
-              {aggregatedMetrics.maxP95 >= 1000
-                ? `${(aggregatedMetrics.maxP95 / 1000).toFixed(1)}s`
-                : `${Math.round(aggregatedMetrics.maxP95)}ms`}
+            <span className={cn("font-medium tabular-nums", p95ColorClass(aggregatedMetrics.maxP95))}>
+              {formatP95(aggregatedMetrics.maxP95)}
             </span>
           </div>
+        </div>
+      )}
+
+      {/* Compact metrics fallback — error rate + p95 only, below lg (UX10) */}
+      {aggregatedMetrics && !healthLoading && (
+        <div className="flex lg:hidden items-center gap-1 text-xs" data-testid="header-metrics-compact">
+          <span className={cn("font-medium tabular-nums", errorRateColorClass(aggregatedMetrics.avgErrorRate))}>
+            {aggregatedMetrics.avgErrorRate.toFixed(1)}%
+          </span>
+          <span className="text-muted-foreground">·</span>
+          <span className={cn("font-medium tabular-nums", p95ColorClass(aggregatedMetrics.maxP95))}>
+            {formatP95(aggregatedMetrics.maxP95)}
+          </span>
         </div>
       )}
 
@@ -571,48 +638,12 @@ function LivePageInner() {
     [setTimeRange]
   );
 
-  const handleCustomStart = useCallback(
-    (value: string) => {
-      const iso = value
-        ? new Date(`${value}T00:00:00`).toISOString()
-        : undefined;
-      setTimeRange({ preset: "custom", start: iso, end: filters.timeRange.end });
+  const handleCustomRangeChange = useCallback(
+    (start: string, end: string) => {
+      setTimeRange({ preset: "custom", start, end });
     },
-    [setTimeRange, filters.timeRange.end]
+    [setTimeRange]
   );
-
-  const handleCustomEnd = useCallback(
-    (value: string) => {
-      const iso = value
-        ? new Date(`${value}T23:59:59.999`).toISOString()
-        : undefined;
-      setTimeRange({ preset: "custom", start: filters.timeRange.start, end: iso });
-    },
-    [setTimeRange, filters.timeRange.start]
-  );
-
-  const errorsOnly = filters.statusGroups.includes("4xx") && filters.statusGroups.includes("5xx");
-
-  const toggleErrorsOnly = useCallback(() => {
-    const current = useFilterStore.getState().filters.statusGroups;
-    const active = current.includes("4xx") && current.includes("5xx");
-    useFilterStore.setState((state) => ({
-      filters: {
-        ...state.filters,
-        statusGroups: active ? [] : ["4xx", "5xx"],
-      },
-    }));
-  }, []);
-
-  const formatDateForInput = useCallback((iso?: string) => {
-    if (!iso) return "";
-    const d = new Date(iso);
-    const local = new Date(d.getTime() - d.getTimezoneOffset() * 60_000);
-    return local.toISOString().slice(0, 10);
-  }, []);
-
-  const customStartDate = formatDateForInput(filters.timeRange.start);
-  const customEndDate = formatDateForInput(filters.timeRange.end);
 
   // Filter root spans only (children inherit parent visibility)
   const filteredRootSpans = useMemo(
@@ -670,7 +701,8 @@ function LivePageInner() {
     const start = searchParams.get("start");
     const end = searchParams.get("end");
     const env = searchParams.get("env");
-    const errors = searchParams.get("errors");
+    const status = searchParams.get("status");
+    const errors = searchParams.get("errors"); // legacy param, kept for old shared links
 
     const store = useFilterStore.getState();
     if (time) {
@@ -684,7 +716,15 @@ function LivePageInner() {
       }
     }
     if (env) store.setEnvironment(env);
-    if (errors === "1") {
+    if (status) {
+      const validGroups = new Set(["2xx", "3xx", "4xx", "5xx"]);
+      const groups = status.split(",").filter((g) => validGroups.has(g));
+      if (groups.length > 0) {
+        useFilterStore.setState((state) => ({
+          filters: { ...state.filters, statusGroups: groups as StreamFilters["statusGroups"] },
+        }));
+      }
+    } else if (errors === "1") {
       useFilterStore.setState((state) => ({
         filters: { ...state.filters, statusGroups: ["4xx", "5xx"] },
       }));
@@ -698,12 +738,12 @@ function LivePageInner() {
     if (filters.timeRange.start) params.set("start", filters.timeRange.start);
     if (filters.timeRange.end) params.set("end", filters.timeRange.end);
     if (filters.environment) params.set("env", filters.environment);
-    if (errorsOnly) params.set("errors", "1");
+    if (filters.statusGroups.length > 0) params.set("status", filters.statusGroups.join(","));
 
     const search = params.toString();
     const newUrl = `${window.location.pathname}${search ? `?${search}` : ""}`;
     window.history.replaceState(null, "", newUrl);
-  }, [filters, errorsOnly]);
+  }, [filters]);
 
   // Reset filters on org/project switch (UX16, AC4)
   const contextKeyRef = useRef(`${orgSlug}/${projectSlug}`);
@@ -716,16 +756,25 @@ function LivePageInner() {
   }, [orgSlug, projectSlug, filterReset]);
 
   // --- Selection & Inspector state (Story 3.3 + 3.6) ---
-  // highlightedSpanId: keyboard/click highlight (J/K navigation, AC2)
+  // highlightedKey: keyboard/click highlight (J/K navigation, AC2), keyed by `${type}-${span_id}`
+  // because an expanded root's span_id is duplicated as its own first "child" row —
+  // a plain span_id key can't tell those two rows apart and navigation would stall on them.
   // inspectorSpanId: which span has its inspector open (Enter to open, Escape to close)
-  const [highlightedSpanId, setHighlightedSpanId] = useState<string | null>(null);
+  const itemKey = useCallback((item: DisplayItem) => `${item.type}-${item.span.span_id}`, []);
+  const [highlightedKey, setHighlightedKey] = useState<string | null>(null);
   const [inspectorSpanId, setInspectorSpanId] = useState<string | null>(null);
   const inspectorOpen = inspectorSpanId !== null;
   const { detail: spanDetail, loading: detailLoading, error: detailError } =
     useSpanDetail(orgSlug, projectSlug, inspectorSpanId);
 
-  // The "active" span for row highlighting is either the highlighted span or the inspector span
-  const activeSpanId = highlightedSpanId ?? inspectorSpanId;
+  // The "active" row for highlighting is either the keyboard/click highlight or,
+  // if none is set yet, whichever row matches the open inspector's span.
+  const activeKey = useMemo(() => {
+    if (highlightedKey) return highlightedKey;
+    if (!inspectorSpanId) return null;
+    const match = displayList.find((item) => item.span.span_id === inspectorSpanId);
+    return match ? itemKey(match) : null;
+  }, [highlightedKey, inspectorSpanId, displayList, itemKey]);
 
   // --- Resizable inspector panel ---
   const [inspectorWidth, setInspectorWidth] = useState(40); // default 40%
@@ -765,32 +814,34 @@ function LivePageInner() {
   const listContainerRef = useRef<HTMLDivElement>(null);
 
   // Click handler: highlight + open inspector (preserves existing behavior)
-  const handleRowClick = useCallback((spanId: string) => {
-    setHighlightedSpanId(spanId);
-    setInspectorSpanId(spanId);
-  }, []);
+  const handleRowClick = useCallback((item: DisplayItem) => {
+    setHighlightedKey(itemKey(item));
+    setInspectorSpanId(item.span.span_id);
+  }, [itemKey]);
 
   // --- Keyboard Navigation (Story 3.6, AC2/AC3/AC4, UX3) ---
+  // Walks the full displayList (root rows + expanded children) so j/k can
+  // reach child spans once a trace is expanded, not just root rows.
 
-  // Compute selected index from highlighted span for keyboard navigation
-  const selectedIndex = useMemo(() => {
-    if (!highlightedSpanId) return -1;
-    return filteredSpans.findIndex((s) => s.span_id === highlightedSpanId);
-  }, [highlightedSpanId, filteredSpans]);
+  // Compute selected index from the highlighted row for keyboard navigation
+  const selectedDisplayIndex = useMemo(() => {
+    if (!highlightedKey) return -1;
+    return displayList.findIndex((item) => itemKey(item) === highlightedKey);
+  }, [highlightedKey, displayList, itemKey]);
 
   // J / ArrowDown — move selection down (AC2)
   const moveDown = useCallback(() => {
-    if (filteredSpans.length === 0) return;
-    const nextIndex = selectedIndex === -1 ? 0 : Math.min(selectedIndex + 1, filteredSpans.length - 1);
-    setHighlightedSpanId(filteredSpans[nextIndex].span_id);
-  }, [filteredSpans, selectedIndex]);
+    if (displayList.length === 0) return;
+    const nextIndex = selectedDisplayIndex === -1 ? 0 : Math.min(selectedDisplayIndex + 1, displayList.length - 1);
+    setHighlightedKey(itemKey(displayList[nextIndex]));
+  }, [displayList, selectedDisplayIndex, itemKey]);
 
   // K / ArrowUp — move selection up (AC2)
   const moveUp = useCallback(() => {
-    if (filteredSpans.length === 0) return;
-    const nextIndex = selectedIndex === -1 ? filteredSpans.length - 1 : Math.max(selectedIndex - 1, 0);
-    setHighlightedSpanId(filteredSpans[nextIndex].span_id);
-  }, [filteredSpans, selectedIndex]);
+    if (displayList.length === 0) return;
+    const nextIndex = selectedDisplayIndex === -1 ? displayList.length - 1 : Math.max(selectedDisplayIndex - 1, 0);
+    setHighlightedKey(itemKey(displayList[nextIndex]));
+  }, [displayList, selectedDisplayIndex, itemKey]);
 
   useKeyboardShortcut("j", moveDown);
   useKeyboardShortcut("ArrowDown", moveDown);
@@ -799,10 +850,10 @@ function LivePageInner() {
 
   // Enter — open inspector for highlighted span (AC3)
   useKeyboardShortcut("Enter", useCallback(() => {
-    if (highlightedSpanId) {
-      setInspectorSpanId(highlightedSpanId);
+    if (selectedDisplayIndex >= 0) {
+      setInspectorSpanId(displayList[selectedDisplayIndex].span.span_id);
     }
-  }, [highlightedSpanId]));
+  }, [selectedDisplayIndex, displayList]));
 
   // Escape — close inspector and return focus to list (AC4, UX3)
   useKeyboardShortcut("Escape", useCallback(() => {
@@ -899,6 +950,10 @@ function LivePageInner() {
   // --- History loading (AC1) ---
   const fetchingRef = useRef(false);
   const scrollAdjustRef = useRef(0);
+  // Set right before a history prepend, cleared after the next auto-scroll
+  // check — prevents a history load (triggered by scrolling up) from ever
+  // being mistaken for new live data and snapping the view back to the bottom.
+  const isHistoryPrependRef = useRef(false);
 
   /** Build filter query params for server-side filtering in historical mode. */
   const buildFilterParams = useCallback(() => {
@@ -940,6 +995,7 @@ function LivePageInner() {
         // Only root spans affect scroll position (children are collapsed by default)
         const rootCount = chronological.filter((s) => !s.parent_span_id || s.parent_span_id === "").length;
         scrollAdjustRef.current = rootCount * ROW_HEIGHT;
+        isHistoryPrependRef.current = true;
         prependSpans(chronological);
 
         const meta = res.meta as { has_more?: boolean };
@@ -999,9 +1055,14 @@ function LivePageInner() {
 
       fetchInitialPage();
     } else if (!isHistoricalMode && prevHistoricalRef.current) {
-      // Leaving historical mode — reset store (SSE will auto-reconnect)
+      // Leaving historical mode — reset store and re-run the recent-spans
+      // load (SSE reconnects on its own, but that only delivers *new* events;
+      // without re-fetching, the buffer stays empty until traffic happens to
+      // arrive, which looks identical to "no data ever sent" and wrongly
+      // shows the SDK onboarding screen).
       reset();
       setHasMoreHistory(true);
+      setInitialLoadDone(false);
     }
     prevHistoricalRef.current = isHistoricalMode;
   }, [isHistoricalMode, projectId, orgSlug, projectSlug, filters.timeRange.start, filters.timeRange.end, reset, prependSpans, setLoadingHistory, setHasMoreHistory, buildFilterParams]);
@@ -1033,12 +1094,18 @@ function LivePageInner() {
     function handleScroll() {
       if (!el) return;
       const threshold = 50;
+      // When everything already fits in the viewport there's nothing to
+      // scroll into, so "near top" and "near bottom" would otherwise both
+      // read true for the same scroll position — treat it as bottom (nothing
+      // more to tail into) and skip the history fetch entirely.
+      const hasScrollableContent = el.scrollHeight > el.clientHeight;
       const atBottom =
+        !hasScrollableContent ||
         el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
       setIsAtBottom(atBottom);
 
       // Trigger history loading when scrolled near top (AC1)
-      if (el.scrollTop < 100) {
+      if (hasScrollableContent && el.scrollTop < 100) {
         loadHistory();
       }
     }
@@ -1047,23 +1114,20 @@ function LivePageInner() {
     return () => el.removeEventListener("scroll", handleScroll);
   }, [setIsAtBottom, loadHistory]);
 
-  // Auto-scroll when at bottom and new spans arrive (AC2)
+  // Auto-scroll when at bottom and new spans arrive (AC2) — but never because
+  // of a history load (older spans prepended at the top from scrolling up).
   useEffect(() => {
-    if (isAtBottom && displayList.length > 0 && displayList.length > prevCountRef.current) {
+    const grew = displayList.length > 0 && displayList.length > prevCountRef.current;
+    if (isAtBottom && grew && !isHistoryPrependRef.current) {
       virtualizer.scrollToIndex(displayList.length - 1, { align: "end" });
     }
+    isHistoryPrependRef.current = false;
     prevCountRef.current = displayList.length;
   }, [displayList.length, isAtBottom, virtualizer]);
 
   // Auto-scroll selected row into view when keyboard-navigating (AC2, Story 3.6)
-  // Map root span index to displayList index (accounts for expanded children)
-  const selectedDisplayIndex = useMemo(() => {
-    if (!highlightedSpanId) return -1;
-    return displayList.findIndex(
-      (item) => item.type === "root" && item.span.span_id === highlightedSpanId
-    );
-  }, [highlightedSpanId, displayList]);
-
+  // selectedDisplayIndex (computed above, in the keyboard nav section) already
+  // covers both root and child rows.
   useEffect(() => {
     if (selectedDisplayIndex >= 0) {
       virtualizer.scrollToIndex(selectedDisplayIndex, { align: "auto" });
@@ -1077,8 +1141,14 @@ function LivePageInner() {
   }
 
   // Determine what to show
-  const showSkeleton = loading || !initialLoadDone;
-  const showEmpty = !loading && initialLoadDone && spans.length === 0;
+  // In historical mode, a zero-span result means "nothing in this range" —
+  // never the SDK onboarding flow, which only applies when no data has ever
+  // been sent at all.
+  const showSkeleton =
+    loading || !initialLoadDone || (isHistoricalMode && isLoadingHistory && spans.length === 0);
+  const showEmpty = !loading && initialLoadDone && spans.length === 0 && !isHistoricalMode;
+  const showHistoricalEmpty =
+    !loading && initialLoadDone && spans.length === 0 && isHistoricalMode && !isLoadingHistory;
   const showList = !loading && initialLoadDone && spans.length > 0;
   const showNoResults = showList && filteredSpans.length === 0;
 
@@ -1092,13 +1162,8 @@ function LivePageInner() {
         status={status}
         spanCount={filteredSpans.length}
         isHistorical={isHistoricalMode}
-        customStartDate={customStartDate}
-        customEndDate={customEndDate}
-        errorsOnly={errorsOnly}
-        onToggleErrorsOnly={toggleErrorsOnly}
         onTimePreset={handleTimePreset}
-        onCustomStart={handleCustomStart}
-        onCustomEnd={handleCustomEnd}
+        onCustomRangeChange={handleCustomRangeChange}
       />
       <TimelineBar />
       <div ref={containerRef} className="relative flex flex-1 overflow-hidden">
@@ -1125,6 +1190,14 @@ function LivePageInner() {
             >
               {showSkeleton && <PulseSkeleton />}
               {showEmpty && <EmptyState orgSlug={orgSlug} projectSlug={projectSlug} />}
+              {showHistoricalEmpty && (
+                <div className="flex h-full items-center justify-center">
+                  <div className="text-center">
+                    <p className="text-sm font-medium text-muted-foreground">No requests in this time range</p>
+                    <p className="mt-1 text-xs text-muted-foreground/70">Try a different date range or check your filters</p>
+                  </div>
+                </div>
+              )}
               {showNoResults && (
                 <div className="flex h-full items-center justify-center">
                   <div className="text-center">
@@ -1171,12 +1244,12 @@ function LivePageInner() {
                       item.type === "root" ? (
                         <StreamRow
                           span={item.span}
-                          isSelected={item.span.span_id === activeSpanId}
+                          isSelected={itemKey(item) === activeKey}
                           childCount={item.childCount}
                           hasErrorChildren={item.hasErrorChildren}
                           isExpanded={item.isExpanded}
                           onToggleExpand={() => toggleExpanded(item.span.span_id)}
-                          onClick={() => handleRowClick(item.span.span_id)}
+                          onClick={() => handleRowClick(item)}
                         />
                       ) : (
                         <ChildSpanRow
@@ -1184,14 +1257,14 @@ function LivePageInner() {
                           depth={item.depth}
                           childCount={item.childCount}
                           isLast={item.isLast}
-                          isSelected={item.span.span_id === activeSpanId}
-                          onClick={() => handleRowClick(item.span.span_id)}
+                          isSelected={itemKey(item) === activeKey}
+                          onClick={() => handleRowClick(item)}
                         />
                       );
 
                     return (
                       <div
-                        key={`${item.type}-${item.span.span_id}`}
+                        key={itemKey(item)}
                         style={{
                           position: "absolute",
                           top: 0,

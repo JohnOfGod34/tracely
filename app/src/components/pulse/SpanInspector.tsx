@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   X,
   Copy,
@@ -466,6 +466,22 @@ export function SpanInspector({ detail, loading, error, onClose, orgSlug, projec
     : false;
 
   const [activeTab, setActiveTab] = useState<TabId>("response");
+  const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  // Roving-tabindex arrow key navigation (WAI-ARIA Tabs pattern)
+  function handleTabKeyDown(e: React.KeyboardEvent, index: number) {
+    let nextIndex: number | null = null;
+    if (e.key === "ArrowRight") nextIndex = (index + 1) % TABS.length;
+    else if (e.key === "ArrowLeft") nextIndex = (index - 1 + TABS.length) % TABS.length;
+    else if (e.key === "Home") nextIndex = 0;
+    else if (e.key === "End") nextIndex = TABS.length - 1;
+
+    if (nextIndex !== null) {
+      e.preventDefault();
+      setActiveTab(TABS[nextIndex].id);
+      tabRefs.current[nextIndex]?.focus();
+    }
+  }
 
   // Build full URL with query params for display (strip method prefix if present in span_name)
   const fullUrl = useMemo(() => {
@@ -563,13 +579,16 @@ export function SpanInspector({ detail, loading, error, onClose, orgSlug, projec
 
       {/* Tabs */}
       <div className="flex border-b" role="tablist" aria-label="Inspector tabs">
-        {TABS.map((tab) => (
+        {TABS.map((tab, i) => (
           <button
             key={tab.id}
+            ref={(el) => { tabRefs.current[i] = el; }}
             role="tab"
             aria-selected={activeTab === tab.id}
             aria-controls={`tabpanel-${tab.id}`}
+            tabIndex={activeTab === tab.id ? 0 : -1}
             onClick={() => setActiveTab(tab.id)}
+            onKeyDown={(e) => handleTabKeyDown(e, i)}
             className={cn(
               "flex-1 px-3 py-2 text-xs font-medium transition-colors",
               activeTab === tab.id

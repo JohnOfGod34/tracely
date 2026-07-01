@@ -42,3 +42,6 @@ htmlcov/
 
 # Build
 *.log
+.agents
+.claude
+skills-lock.json
