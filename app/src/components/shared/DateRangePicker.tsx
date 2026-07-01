@@ -94,17 +94,18 @@ export function DateRangePicker({ start, end, onApply }: DateRangePickerProps) {
       <PopoverPrimitive.Trigger asChild>
         <button
           type="button"
-          className="inline-flex h-7 items-center gap-1.5 rounded-md border bg-background px-2 text-xs transition-colors hover:bg-accent"
+          className="inline-flex h-7 max-w-[180px] items-center gap-1.5 rounded-md border bg-background px-2 text-xs transition-colors hover:bg-accent sm:max-w-[280px]"
           data-testid="header-custom-range-trigger"
         >
-          <Calendar className="size-3.5 text-muted-foreground" />
-          {formatRangeLabel(start, end)}
+          <Calendar className="size-3.5 shrink-0 text-muted-foreground" />
+          <span className="truncate">{formatRangeLabel(start, end)}</span>
         </button>
       </PopoverPrimitive.Trigger>
       <PopoverPrimitive.Portal>
         <PopoverPrimitive.Content
           align="start"
           sideOffset={6}
+          data-slot="popover-content"
           className="z-50 w-[300px] rounded-lg border bg-popover p-3 text-popover-foreground shadow-lg outline-none"
         >
           {/* Editable start / end rows — date comes from the calendar below, time is free entry */}
