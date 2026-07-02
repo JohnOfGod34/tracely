@@ -14,7 +14,7 @@ import { useSpanDetail } from "@/hooks/useSpanDetail";
 import { useHealthData } from "@/hooks/useHealthData";
 import { useLiveStreamStore } from "@/stores/liveStreamStore";
 import { useFilterStore } from "@/stores/filterStore";
-import { matchesFilters } from "@/lib/filterUtils";
+import { matchesFilters, presetToMs } from "@/lib/filterUtils";
 import { aggregateProjectHealthMetrics } from "@/lib/healthMetrics";
 import { StreamList } from "@/components/pulse/StreamList";
 import { STREAM_ROW_HEIGHT, STREAM_SKELETON_WIDTHS } from "@/components/pulse/streamListTypes";
@@ -1050,6 +1050,38 @@ function LivePageInner({
     prevHistoricalRef.current = isHistoricalMode;
     prevRangeRef.current = rangeKey;
   }, [isHistoricalMode, projectId, orgSlug, projectSlug, filters.timeRange.start, filters.timeRange.end, debouncedSearch, reset, prependSpans, setLoadingHistory, setHasMoreHistory, buildFilterParams]);
+
+  // --- Preset time ranges: backfill from the server (soft seed, not a mode switch) ---
+  // Presets (5m/15m/1h/6h/24h) previously only filtered whatever was already
+  // in the client buffer (initial load + live SSE trickle), so e.g. "24h"
+  // right after opening the page showed only the last couple minutes.
+  // Fetch the actual window from the server and merge it in — no reset(),
+  // the live stream keeps running untouched, and prependSpans dedups
+  // against whatever's already loaded.
+  const prevPresetRef = useRef<TimeRangePreset>(filters.timeRange.preset);
+  useEffect(() => {
+    const preset = filters.timeRange.preset;
+    if (preset !== "custom" && preset !== prevPresetRef.current && projectId) {
+      const after = new Date(Date.now() - presetToMs(preset)).toISOString();
+      const url =
+        `/api/orgs/${orgSlug}/projects/${projectSlug}/spans?limit=150` +
+        `&after=${encodeURIComponent(after)}` +
+        buildFilterParams();
+
+      apiFetch<DataEnvelope<SpanEvent[]>>(url)
+        .then((res) => {
+          if (res.data.length > 0) {
+            prependSpans([...res.data].reverse());
+            const meta = res.meta as { has_more?: boolean };
+            if (!meta.has_more) setHasMoreHistory(false);
+          }
+        })
+        .catch(() => {
+          // Non-blocking — the buffer just stays whatever it already had
+        });
+    }
+    prevPresetRef.current = preset;
+  }, [filters.timeRange.preset, projectId, orgSlug, projectSlug, prependSpans, setHasMoreHistory, buildFilterParams]);
 
   const emptyState = useMemo(
     () => <EmptyState orgSlug={orgSlug} projectSlug={projectSlug} />,
