@@ -69,11 +69,11 @@ async def get_span_history(
 
     if before is not None:
         where_clauses.append("start_time < %(before)s")
-        params["before"] = before.isoformat()
+        params["before"] = before
 
     if after is not None:
         where_clauses.append("start_time >= %(after)s")
-        params["after"] = after.isoformat()
+        params["after"] = after
 
     if service is not None:
         where_clauses.append("service_name = %(service)s")

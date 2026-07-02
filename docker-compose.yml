@@ -63,6 +63,7 @@ services:
       - "9000:9000"
     volumes:
       - chdata:/var/lib/clickhouse
+      - ./clickhouse/config.d/logging.xml:/etc/clickhouse-server/config.d/logging.xml:ro
     healthcheck:
       test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
       interval: 5s
