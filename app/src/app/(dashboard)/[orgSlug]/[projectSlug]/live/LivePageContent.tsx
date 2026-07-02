@@ -957,12 +957,22 @@ function LivePageInner({
     }
   }, [projectId, hasMoreHistory, orgSlug, projectSlug, prependSpans, setLoadingHistory, setHasMoreHistory, isHistoricalMode, filters.timeRange.start, buildFilterParams]);
 
+  // Debounce endpointSearch before it triggers a server-side historical
+  // refetch — matchesFilters still applies the raw value instantly to the
+  // already-loaded buffer, so typing feels responsive; only the network
+  // round trip (searching the whole selected range) waits for a pause.
+  const [debouncedSearch, setDebouncedSearch] = useState(filters.endpointSearch);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(filters.endpointSearch), 400);
+    return () => clearTimeout(timer);
+  }, [filters.endpointSearch]);
+
   // --- Historical mode: initial fetch on entry (AC5) ---
   const prevHistoricalRef = useRef(false);
   const prevRangeRef = useRef<string | null>(null);
   useEffect(() => {
     const rangeKey = isHistoricalMode
-      ? `${filters.timeRange.start ?? ""}|${filters.timeRange.end ?? ""}`
+      ? `${filters.timeRange.start ?? ""}|${filters.timeRange.end ?? ""}|${debouncedSearch}`
       : null;
     const enteringHistorical = isHistoricalMode && !prevHistoricalRef.current;
     const rangeChanged =
@@ -1039,7 +1049,7 @@ function LivePageInner({
     }
     prevHistoricalRef.current = isHistoricalMode;
     prevRangeRef.current = rangeKey;
-  }, [isHistoricalMode, projectId, orgSlug, projectSlug, filters.timeRange.start, filters.timeRange.end, reset, prependSpans, setLoadingHistory, setHasMoreHistory, buildFilterParams]);
+  }, [isHistoricalMode, projectId, orgSlug, projectSlug, filters.timeRange.start, filters.timeRange.end, debouncedSearch, reset, prependSpans, setLoadingHistory, setHasMoreHistory, buildFilterParams]);
 
   const emptyState = useMemo(
     () => <EmptyState orgSlug={orgSlug} projectSlug={projectSlug} />,
