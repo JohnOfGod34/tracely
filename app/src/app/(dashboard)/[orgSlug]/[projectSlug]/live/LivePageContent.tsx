@@ -276,15 +276,15 @@ function formatMetricValue(value: number, decimals = 1): string {
 }
 
 function errorRateColorClass(rate: number): string {
-  if (rate >= 5) return "text-red-500";
-  if (rate >= 1) return "text-amber-500";
-  return "text-emerald-500";
+  if (rate >= 5) return "text-destructive";
+  if (rate >= 1) return "text-warning";
+  return "text-success";
 }
 
 function p95ColorClass(ms: number): string {
-  if (ms >= 2000) return "text-red-500";
-  if (ms >= 500) return "text-amber-500";
-  return "text-emerald-500";
+  if (ms >= 2000) return "text-destructive";
+  if (ms >= 500) return "text-warning";
+  return "text-success";
 }
 
 function formatP95(ms: number): string {
@@ -427,7 +427,7 @@ const LiveHeader = memo(function LiveHeader({
           />
           {isCustomRangeIncomplete && (
             <div
-              className="absolute left-0 top-10 z-20 w-full border-b bg-amber-500/10 px-4 py-1 text-xs text-amber-700"
+              className="absolute left-0 top-10 z-20 w-full border-b bg-warning/10 px-4 py-1 text-xs text-warning"
               data-testid="header-custom-range-hint"
             >
               Pick a start and end date to view historical data.
@@ -445,7 +445,7 @@ const LiveHeader = memo(function LiveHeader({
           className={cn(
             "inline-flex h-7 items-center rounded-md border px-2 text-xs transition-colors",
             filters.statusGroups.includes("4xx")
-              ? "border-amber-500/40 bg-amber-500/10 text-amber-600 hover:bg-amber-500/15"
+              ? "border-warning/40 bg-warning/10 text-warning hover:bg-warning/15"
               : "border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground"
           )}
           data-testid="header-4xx-only"
@@ -459,7 +459,7 @@ const LiveHeader = memo(function LiveHeader({
           className={cn(
             "inline-flex h-7 items-center rounded-md border px-2 text-xs transition-colors",
             filters.statusGroups.includes("5xx")
-              ? "border-red-500/40 bg-red-500/10 text-red-500 hover:bg-red-500/15"
+              ? "border-destructive/40 bg-destructive/10 text-destructive hover:bg-destructive/15"
               : "border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground"
           )}
           data-testid="header-5xx-only"
@@ -513,29 +513,29 @@ const LiveHeader = memo(function LiveHeader({
       <div className="flex items-center gap-1.5">
         {isHistorical ? (
           <>
-            <Clock className="size-3.5 text-violet-500" />
-            <span className="text-xs text-violet-600">Historical</span>
+            <Clock className="size-3.5 text-muted-foreground" />
+            <span className="text-xs text-muted-foreground">Historical</span>
           </>
         ) : status === "connected" ? (
           <>
             <span className="relative flex h-2 w-2">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-75" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
             </span>
-            <Wifi className="size-3.5 text-emerald-500" />
-            <span className="text-xs text-emerald-600">Live</span>
+            <Wifi className="size-3.5 text-success" />
+            <span className="text-xs text-success">Live</span>
           </>
         ) : status === "connecting" ? (
           <>
-            <span className="h-2 w-2 animate-pulse rounded-full bg-amber-400" />
-            <Wifi className="size-3.5 text-amber-500" />
-            <span className="text-xs text-amber-600">Connecting...</span>
+            <span className="h-2 w-2 animate-pulse rounded-full bg-warning" />
+            <Wifi className="size-3.5 text-warning" />
+            <span className="text-xs text-warning">Connecting...</span>
           </>
         ) : (
           <>
-            <span className="h-2 w-2 rounded-full bg-red-400" />
-            <WifiOff className="size-3.5 text-red-500" />
-            <span className="text-xs text-red-600">Disconnected</span>
+            <span className="h-2 w-2 rounded-full bg-destructive" />
+            <WifiOff className="size-3.5 text-destructive" />
+            <span className="text-xs text-destructive">Disconnected</span>
           </>
         )}
       </div>
@@ -682,6 +682,8 @@ function LivePageInner({
     const end = searchParams.get("end");
     const env = searchParams.get("env");
     const status = searchParams.get("status");
+    const search = searchParams.get("search");
+    const service = searchParams.get("service");
     const errors = searchParams.get("errors"); // legacy param, kept for old shared links
 
     const store = useFilterStore.getState();
@@ -696,6 +698,8 @@ function LivePageInner({
       }
     }
     if (env && env !== "unknown") store.setEnvironment(env);
+    if (search) store.setEndpointSearch(search);
+    if (service) store.setService(service);
     if (status) {
       const validGroups = new Set(["2xx", "3xx", "4xx", "5xx"]);
       const groups = status.split(",").filter((g) => validGroups.has(g));
@@ -720,6 +724,8 @@ function LivePageInner({
     if (filters.environment && filters.environment !== "unknown") {
       params.set("env", filters.environment);
     }
+    if (filters.endpointSearch) params.set("search", filters.endpointSearch);
+    if (filters.service) params.set("service", filters.service);
     if (filters.statusGroups.length > 0) params.set("status", filters.statusGroups.join(","));
 
     const search = params.toString();

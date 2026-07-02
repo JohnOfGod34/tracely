@@ -1,0 +1,21 @@
+/** Shared panel shell for dashboard widgets — flat border, no shadow. */
+export const DASHBOARD_PANEL_CLASS =
+  "rounded-lg border border-border bg-card p-4 h-full";
+
+/** Muted semantic fills for charts (OKLCH, works in light + dark via CSS vars). */
+export const STATUS_CODE_CHART_COLORS: Record<string, string> = {
+  "2xx": "var(--dash-status-2xx)",
+  "3xx": "var(--dash-status-3xx)",
+  "4xx": "var(--dash-status-4xx)",
+  "5xx": "var(--dash-status-5xx)",
+};
+
+export function statusCodeChartColor(code: string): string {
+  return STATUS_CODE_CHART_COLORS[code] ?? "var(--dash-chart-neutral)";
+}
+
+export const DASHBOARD_CHART = {
+  bar: "var(--dash-chart-bar)",
+  grid: "var(--border)",
+  axis: "var(--muted-foreground)",
+} as const;

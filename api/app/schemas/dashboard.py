@@ -85,6 +85,14 @@ class LatencyBucket(BaseModel):
     count: int = Field(0, description="Number of requests in this bucket")
 
 
+class PeriodSummary(BaseModel):
+    """Aggregate metrics for a comparison time window."""
+    total_requests: int = Field(0, description="Total requests in the period")
+    total_errors: int = Field(0, description="Total errors in the period")
+    error_rate: float = Field(0.0, description="Error rate percentage")
+    p95_latency: float = Field(0.0, description="P95 latency in ms")
+
+
 class DashboardMetricsResponse(BaseModel):
     """Enhanced dashboard metrics response for bento grid layout."""
     # Time series data
@@ -124,4 +132,13 @@ class DashboardMetricsResponse(BaseModel):
     services: list[ServiceStatus] = Field(
         default_factory=list,
         description="Service status indicators"
+    )
+
+    previous_period: PeriodSummary | None = Field(
+        None,
+        description="Summary for the immediately preceding window of equal duration",
+    )
+    available_environments: list[str] = Field(
+        default_factory=list,
+        description="Distinct deployment environments seen in the last 7 days",
     )

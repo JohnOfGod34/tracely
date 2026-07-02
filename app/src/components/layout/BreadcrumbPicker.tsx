@@ -79,9 +79,9 @@ function calculateStatusFromMetrics(errorRate: number, p95: number): HealthStatu
 }
 
 const statusConfig = {
-  healthy: { color: "text-emerald-500", bgColor: "bg-emerald-500/10", Icon: CheckCircle2, label: "Healthy" },
-  degraded: { color: "text-amber-500", bgColor: "bg-amber-500/10", Icon: AlertTriangle, label: "Degraded" },
-  error: { color: "text-red-500", bgColor: "bg-red-500/10", Icon: XCircle, label: "Error" },
+  healthy: { color: "text-success", bgColor: "bg-success/10", Icon: CheckCircle2, label: "Healthy" },
+  degraded: { color: "text-warning", bgColor: "bg-warning/10", Icon: AlertTriangle, label: "Degraded" },
+  error: { color: "text-destructive", bgColor: "bg-destructive/10", Icon: XCircle, label: "Error" },
 };
 
 export default function BreadcrumbPicker({

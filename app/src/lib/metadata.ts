@@ -2,6 +2,7 @@ import { cache } from "react";
 import { cookies } from "next/headers";
 import type { SpanEvent } from "@/types/span";
 import type { DataEnvelope } from "@/types/api";
+import type { DashboardMetricsResponse } from "@/types/dashboard";
 
 /** Server-side only — use internal Docker hostname when available. */
 const SERVER_API_BASE =
@@ -88,6 +89,30 @@ export const getInitialSpans = cache(async (
       : false;
 
   return { spans, hasMore };
+});
+
+export interface DashboardMetricsParams {
+  time?: string;
+  start?: string;
+  end?: string;
+  env?: string | null;
+}
+
+export const getDashboardMetrics = cache(async (
+  orgSlug: string,
+  projectSlug: string,
+  params: DashboardMetricsParams = {}
+): Promise<DashboardMetricsResponse | null> => {
+  const search = new URLSearchParams();
+  search.set("time", params.time ?? "5m");
+  if (params.start) search.set("start", params.start);
+  if (params.end) search.set("end", params.end);
+  if (params.env) search.set("env", params.env);
+
+  const data = await serverFetch<DataEnvelope<DashboardMetricsResponse>>(
+    `/api/orgs/${orgSlug}/projects/${projectSlug}/dashboard/metrics?${search.toString()}`
+  );
+  return data?.data ?? null;
 });
 
 export async function getProjectName(

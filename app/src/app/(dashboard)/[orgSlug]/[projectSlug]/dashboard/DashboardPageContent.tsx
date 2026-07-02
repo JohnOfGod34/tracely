@@ -1,15 +1,40 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useState, useRef } from "react";
-import { useParams, useSearchParams } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
-import { Activity, AlertTriangle, Clock, Zap } from "lucide-react";
+import { Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 import type { DataEnvelope } from "@/types/api";
 import type { DashboardMetricsResponse } from "@/types/dashboard";
 import type { TimeRange, TimeRangePreset } from "@/types/span";
 import { useFilterStore } from "@/stores/filterStore";
+import { useActiveAlerts } from "@/hooks/useActiveAlerts";
+import {
+  formatTimeRangeLabel,
+  buildLiveUrl,
+  parseTimeRangeFromSearchParams,
+  matchesDashboardSsrPrefetch,
+} from "@/lib/liveLinks";
+import { DashboardEmptyState } from "@/components/dashboard/DashboardEmptyState";
+import { mergeDuplicateEndpoints } from "@/lib/endpointStats";
+import {
+  getAttentionEndpoints,
+  getAttentionServices,
+  summarizeProjectStatus,
+} from "@/lib/projectHealthStatus";
 import { TimeframeSelector } from "@/components/shared/TimeframeSelector";
+import { DashboardStatusBanner } from "@/components/dashboard/DashboardStatusBanner";
+import { ActiveAlertsStrip } from "@/components/dashboard/ActiveAlertsStrip";
+import { NeedsAttentionPanel } from "@/components/dashboard/NeedsAttentionPanel";
+import { DashboardEnvironmentFilter } from "@/components/dashboard/DashboardEnvironmentFilter";
+import {
+  computeErrorRateTrend,
+  computeLatencyTrend,
+  computeRequestTrend,
+  computeSuccessRateTrend,
+  formatSuccessRate,
+} from "@/lib/metricTrends";
 import {
   ServiceStatusWidget,
   WidgetSkeleton,
@@ -26,6 +51,13 @@ interface ProjectInfo {
   name: string;
   slug: string;
   org_id: string;
+}
+
+export interface DashboardPageClientProps {
+  orgSlug: string;
+  projectSlug: string;
+  projectId: string | null;
+  initialMetrics: DashboardMetricsResponse | null;
 }
 
 // Skeleton grid for loading state
@@ -53,25 +85,20 @@ function DashboardSkeleton() {
   );
 }
 
-// Empty state when no data
-function EmptyDashboard() {
-  return (
-    <div className="flex h-[400px] items-center justify-center">
-      <div className="text-center">
-        <Activity className="mx-auto size-12 text-muted-foreground/50 mb-4" />
-        <p className="text-lg font-medium text-muted-foreground">No metrics available</p>
-        <p className="mt-1 text-sm text-muted-foreground/70">
-          Start sending requests to see dashboard metrics
-        </p>
-      </div>
-    </div>
-  );
-}
-
-export default function DashboardPageClient() {
+export default function DashboardPageClient({
+  orgSlug,
+  projectSlug,
+  projectId: serverProjectId,
+  initialMetrics,
+}: DashboardPageClientProps) {
   return (
     <Suspense fallback={<DashboardPageSkeleton />}>
-      <DashboardPageInner />
+      <DashboardPageInner
+        orgSlug={orgSlug}
+        projectSlug={projectSlug}
+        projectId={serverProjectId}
+        initialMetrics={initialMetrics}
+      />
     </Suspense>
   );
 }
@@ -79,30 +106,42 @@ export default function DashboardPageClient() {
 function DashboardPageSkeleton() {
   return (
     <div className="p-4">
-      <div className="h-12 mb-4" />
+      <div className="mb-4 h-12" />
       <DashboardSkeleton />
     </div>
   );
 }
 
-function DashboardPageInner() {
-  const params = useParams<{ orgSlug: string; projectSlug: string }>();
-  const { orgSlug, projectSlug } = params;
+function DashboardPageInner({
+  orgSlug,
+  projectSlug,
+  projectId: serverProjectId,
+  initialMetrics,
+}: DashboardPageClientProps) {
   const searchParams = useSearchParams();
 
-  // Get timeRange from filter store (shared with Pulse View)
-  const { filters, setTimeRange } = useFilterStore();
-  const timeRange = filters.timeRange;
+  const { filters, setTimeRange, setAvailableEnvironments } = useFilterStore();
+  const storeTimeRange = filters.timeRange;
+  const environment = filters.environment;
 
-  // Hydrate from URL on mount
+  // Prefer URL timeframe on first paint (before useEffect hydrates the store)
+  const effectiveTimeRange = useMemo(() => {
+    const fromUrl = parseTimeRangeFromSearchParams(searchParams);
+    return fromUrl ?? storeTimeRange;
+  }, [searchParams, storeTimeRange]);
+
+  const timeRange = storeTimeRange;
+
+  // Hydrate filter store from URL before paint (avoids a 5m query when URL says 24h)
   const hydratedRef = useRef(false);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (hydratedRef.current) return;
     hydratedRef.current = true;
 
     const time = searchParams.get("time");
     const start = searchParams.get("start");
     const end = searchParams.get("end");
+    const env = searchParams.get("env");
 
     if (time) {
       const validPresets = new Set(["5m", "15m", "1h", "6h", "24h", "custom"]);
@@ -114,6 +153,10 @@ function DashboardPageInner() {
         });
       }
     }
+
+    const store = useFilterStore.getState();
+    if (env && env !== "unknown") store.setEnvironment(env);
+    else if (env === "unknown") store.setEnvironment("unknown");
   }, [searchParams, setTimeRange]);
 
   // Sync timeRange to URL
@@ -127,11 +170,14 @@ function DashboardPageInner() {
       if (timeRange.start) params.set("start", timeRange.start);
       if (timeRange.end) params.set("end", timeRange.end);
     }
+    if (environment && environment !== "unknown") {
+      params.set("env", environment);
+    }
 
     const search = params.toString();
     const newUrl = `${window.location.pathname}${search ? `?${search}` : ""}`;
     window.history.replaceState(null, "", newUrl);
-  }, [timeRange]);
+  }, [timeRange, environment]);
 
   // Handle timeframe change
   const handleTimeRangeChange = useCallback(
@@ -141,10 +187,16 @@ function DashboardPageInner() {
     [setTimeRange]
   );
 
-  // Fetch project ID
-  const [projectId, setProjectId] = useState<string | null>(null);
+  // Project ID — from SSR or client fallback
+  const [projectId, setProjectId] = useState<string | null>(serverProjectId);
 
   useEffect(() => {
+    setProjectId(serverProjectId);
+  }, [serverProjectId]);
+
+  useEffect(() => {
+    if (projectId) return;
+
     let cancelled = false;
 
     async function loadProject() {
@@ -162,41 +214,76 @@ function DashboardPageInner() {
     return () => {
       cancelled = true;
     };
-  }, [orgSlug, projectSlug]);
+  }, [projectId, orgSlug, projectSlug]);
+
+  const envParam =
+    environment && environment !== "unknown" ? environment : undefined;
+
+  const queryTimeRange = effectiveTimeRange;
+  const useSsrInitialData = matchesDashboardSsrPrefetch(queryTimeRange, environment);
 
   // React Query for dashboard metrics
   const {
     data: dashboardData,
     isLoading,
     error,
+    dataUpdatedAt,
+    isFetching,
   } = useQuery<DashboardMetricsResponse>({
-    queryKey: ["dashboard", "metrics", projectId, timeRange.preset, timeRange.start, timeRange.end],
+    queryKey: [
+      "dashboard",
+      "metrics",
+      projectId,
+      queryTimeRange.preset,
+      queryTimeRange.start,
+      queryTimeRange.end,
+      environment,
+    ],
     queryFn: async () => {
       if (!projectId) throw new Error("No project ID");
-      // Build API query params inside queryFn to avoid stale closure
       const params = new URLSearchParams();
-      params.set("time", timeRange.preset);
-      if (timeRange.preset === "custom") {
-        if (timeRange.start) params.set("start", timeRange.start);
-        if (timeRange.end) params.set("end", timeRange.end);
+      params.set("time", queryTimeRange.preset);
+      if (queryTimeRange.preset === "custom") {
+        if (queryTimeRange.start) params.set("start", queryTimeRange.start);
+        if (queryTimeRange.end) params.set("end", queryTimeRange.end);
       }
+      if (envParam) params.set("env", envParam);
+      if (environment === "unknown") params.set("env", "unknown");
       const res = await apiFetch<DataEnvelope<DashboardMetricsResponse>>(
         `/api/orgs/${orgSlug}/projects/${projectSlug}/dashboard/metrics?${params.toString()}`
       );
       return res.data;
     },
     enabled: !!projectId,
-    refetchInterval: timeRange.preset !== "custom" ? 10000 : false, // 10s polling for live presets
+    initialData: useSsrInitialData && initialMetrics ? initialMetrics : undefined,
+    initialDataUpdatedAt:
+      useSsrInitialData && initialMetrics ? Date.now() : undefined,
+    placeholderData: keepPreviousData,
+    refetchInterval: queryTimeRange.preset !== "custom" ? 10000 : false,
     staleTime: 8000,
   });
+
+  useEffect(() => {
+    if (dashboardData?.available_environments?.length) {
+      setAvailableEnvironments(dashboardData.available_environments);
+    }
+  }, [dashboardData?.available_environments, setAvailableEnvironments]);
 
   // Log error for debugging
   if (error) {
     console.error("Dashboard metrics fetch error:", error);
   }
 
-  const showLoading = isLoading || !projectId;
-  // Show data if we have any metrics (total_requests, services, endpoints, or time series)
+  const { data: activeAlertsData, isLoading: alertsLoading } = useActiveAlerts({
+    orgSlug,
+    projectSlug,
+    enabled: !!projectId,
+  });
+
+  const activeAlerts = activeAlertsData?.events ?? [];
+
+  const showLoading =
+    !projectId || (isLoading && !dashboardData) || (isFetching && !dashboardData);
   const hasData = dashboardData && (
     dashboardData.total_requests > 0 ||
     dashboardData.services.length > 0 ||
@@ -204,84 +291,232 @@ function DashboardPageInner() {
     dashboardData.requests_per_minute.length > 0 ||
     dashboardData.status_codes.length > 0
   );
-  const showEmpty = !isLoading && projectId && !hasData;
+  const showEmpty =
+    !isLoading && !isFetching && !error && projectId && dashboardData != null && !hasData;
   const showData = !isLoading && dashboardData && hasData;
 
   // Prepare data for widgets
   const statusCodeData = dashboardData?.status_codes.map((sc) => ({
     code: sc.code,
     count: sc.count,
-    color:
-      sc.code === "2xx"
-        ? "hsl(142, 76%, 36%)"
-        : sc.code === "3xx"
-        ? "hsl(221, 83%, 53%)"
-        : sc.code === "4xx"
-        ? "hsl(38, 92%, 50%)"
-        : "hsl(0, 84%, 60%)",
   })) || [];
 
-  const endpointData = dashboardData?.top_endpoints.map((ep) => ({
-    route: ep.route,
-    method: ep.method,
-    count: ep.count,
-    avgLatency: ep.avg_latency,
-    errorRate: ep.error_rate,
-  })) || [];
+  const mergedTopEndpoints = useMemo(
+    () => mergeDuplicateEndpoints(dashboardData?.top_endpoints ?? []),
+    [dashboardData?.top_endpoints]
+  );
 
-  // Calculate trends (mock for now - would compare to previous period)
-  const errorTrend = dashboardData && dashboardData.error_rate > 1 ? "up" : "down";
+  const endpointData = useMemo(
+    () =>
+      mergedTopEndpoints.map((ep) => ({
+        route: ep.route,
+        method: ep.method,
+        count: ep.count,
+        avgLatency: ep.avg_latency,
+        errorRate: ep.error_rate,
+      })),
+    [mergedTopEndpoints]
+  );
+
+  const statusSummary = useMemo(
+    () => summarizeProjectStatus(dashboardData?.services ?? []),
+    [dashboardData?.services]
+  );
+
+  const attentionServices = useMemo(
+    () => getAttentionServices(dashboardData?.services ?? []),
+    [dashboardData?.services]
+  );
+
+  const attentionEndpoints = useMemo(
+    () => getAttentionEndpoints(mergedTopEndpoints),
+    [mergedTopEndpoints]
+  );
+
+  const timeRangeLabel = formatTimeRangeLabel(effectiveTimeRange);
+  const envLabel =
+    environment && environment !== "unknown"
+      ? environment
+      : environment === "unknown"
+        ? "Unlabeled environment"
+        : null;
+  const headerContextLabel = envLabel
+    ? `${timeRangeLabel} · ${envLabel}`
+    : timeRangeLabel;
+
+  const lastUpdatedLabel = useMemo(() => {
+    if (!dataUpdatedAt) return undefined;
+    const secs = Math.max(0, Math.floor((Date.now() - dataUpdatedAt) / 1000));
+    if (secs < 10) return "just now";
+    if (secs < 60) return `${secs}s ago`;
+    return `${Math.floor(secs / 60)}m ago`;
+  }, [dataUpdatedAt, isFetching]);
+
+  const previous = dashboardData?.previous_period ?? undefined;
+
+  const requestTrend = useMemo(
+    () =>
+      dashboardData
+        ? computeRequestTrend(dashboardData.total_requests, previous?.total_requests)
+        : null,
+    [dashboardData, previous?.total_requests]
+  );
+
+  const errorTrend = useMemo(
+    () =>
+      dashboardData
+        ? computeErrorRateTrend(dashboardData.error_rate, previous?.error_rate)
+        : null,
+    [dashboardData, previous?.error_rate]
+  );
+
+  const latencyTrend = useMemo(
+    () =>
+      dashboardData
+        ? computeLatencyTrend(dashboardData.p95_latency, previous?.p95_latency)
+        : null,
+    [dashboardData, previous?.p95_latency]
+  );
+
+  const successTrend = useMemo(
+    () =>
+      dashboardData
+        ? computeSuccessRateTrend(dashboardData.error_rate, previous?.error_rate)
+        : null,
+    [dashboardData, previous?.error_rate]
+  );
+
+  const successRate = dashboardData
+    ? formatSuccessRate(dashboardData.error_rate)
+    : "—";
+
+  const errorTone =
+    dashboardData && dashboardData.error_rate > 5
+      ? "critical"
+      : dashboardData && dashboardData.error_rate > 1
+        ? "warning"
+        : "default";
+
+  const latencyTone =
+    dashboardData && dashboardData.p95_latency > 2000
+      ? "critical"
+      : dashboardData && dashboardData.p95_latency > 500
+        ? "warning"
+        : "default";
 
   return (
-    <div className="p-4 space-y-4">
-      {/* Header with timeframe selector */}
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Dashboard</h1>
-        <TimeframeSelector
-          timeRange={timeRange}
-          onTimeRangeChange={handleTimeRangeChange}
-          variant="inline"
-        />
+    <div className="space-y-5 p-4">
+      <div className="flex flex-col gap-3 border-b border-border pb-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h1 className="text-lg font-semibold tracking-tight">Overview</h1>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {headerContextLabel}
+            {lastUpdatedLabel && showData ? ` · updated ${lastUpdatedLabel}` : ""}
+          </p>
+        </div>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+          <DashboardEnvironmentFilter className="sm:w-auto" />
+          <TimeframeSelector
+            timeRange={effectiveTimeRange}
+            onTimeRangeChange={handleTimeRangeChange}
+            variant="inline"
+            appearance="segmented"
+          />
+          <Link
+            href={buildLiveUrl(orgSlug, projectSlug, {
+              timeRange: effectiveTimeRange,
+              environment,
+            })}
+            className="inline-flex min-h-9 items-center justify-center rounded-md border border-border px-3 py-2 text-xs font-medium hover:bg-muted/60"
+          >
+            Live
+          </Link>
+        </div>
       </div>
+
+      {error && (
+        <div
+          className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive"
+          role="alert"
+        >
+          Could not load dashboard metrics. Check your connection and refresh the page.
+        </div>
+      )}
 
       {/* Content */}
       {showLoading && <DashboardSkeleton />}
-      {showEmpty && <EmptyDashboard />}
+      {showEmpty && (
+        <DashboardEmptyState
+          orgSlug={orgSlug}
+          projectSlug={projectSlug}
+          timeRangeLabel={timeRangeLabel}
+          timeRange={effectiveTimeRange}
+          environment={environment}
+        />
+      )}
       {showData && dashboardData && (
-        <div className="grid grid-cols-12 gap-4">
-          {/* Row 1: Metric Cards */}
-          <MetricCard
-            title="Total Requests"
-            value={dashboardData.total_requests.toLocaleString()}
-            icon={<Activity className="size-5" />}
-            className="col-span-12 sm:col-span-6 lg:col-span-3"
-          />
-          <MetricCard
-            title="Error Rate"
-            value={`${dashboardData.error_rate.toFixed(2)}%`}
-            subtitle={`${dashboardData.total_errors} errors`}
-            trend={errorTrend}
-            trendValue={errorTrend === "up" ? "Increasing" : "Normal"}
-            icon={<AlertTriangle className="size-5" />}
-            variant={dashboardData.error_rate > 5 ? "danger" : dashboardData.error_rate > 1 ? "warning" : "default"}
-            className="col-span-12 sm:col-span-6 lg:col-span-3"
-          />
-          <MetricCard
-            title="P95 Latency"
-            value={dashboardData.p95_latency >= 1000 ? `${(dashboardData.p95_latency / 1000).toFixed(2)}s` : `${Math.round(dashboardData.p95_latency)}ms`}
-            subtitle={`Avg: ${Math.round(dashboardData.avg_latency)}ms`}
-            icon={<Clock className="size-5" />}
-            variant={dashboardData.p95_latency > 2000 ? "danger" : dashboardData.p95_latency > 500 ? "warning" : "default"}
-            className="col-span-12 sm:col-span-6 lg:col-span-3"
-          />
-          <MetricCard
-            title="P50 Latency"
-            value={dashboardData.p50_latency >= 1000 ? `${(dashboardData.p50_latency / 1000).toFixed(2)}s` : `${Math.round(dashboardData.p50_latency)}ms`}
-            subtitle={`P99: ${Math.round(dashboardData.p99_latency)}ms`}
-            icon={<Zap className="size-5" />}
-            className="col-span-12 sm:col-span-6 lg:col-span-3"
+        <>
+          <DashboardStatusBanner
+            summary={statusSummary}
+            activeAlertCount={activeAlerts.length}
+            orgSlug={orgSlug}
+            projectSlug={projectSlug}
+            isLoading={alertsLoading && activeAlerts.length === 0}
           />
 
+          <div className="grid grid-cols-12 gap-3">
+          <MetricCard
+            title="Requests"
+            value={dashboardData.total_requests.toLocaleString()}
+            trend={requestTrend?.direction}
+            trendValue={requestTrend?.label}
+            invertTrendColors={requestTrend?.invertColors}
+            className="col-span-6 lg:col-span-3"
+          />
+          <MetricCard
+            title="Error rate"
+            value={`${dashboardData.error_rate.toFixed(2)}%`}
+            trend={errorTrend?.direction}
+            trendValue={errorTrend?.label}
+            invertTrendColors={errorTrend?.invertColors}
+            tone={errorTone}
+            className="col-span-6 lg:col-span-3"
+          />
+          <MetricCard
+            title="P95 latency"
+            value={dashboardData.p95_latency >= 1000 ? `${(dashboardData.p95_latency / 1000).toFixed(2)}s` : `${Math.round(dashboardData.p95_latency)}ms`}
+            trend={latencyTrend?.direction}
+            trendValue={latencyTrend?.label}
+            invertTrendColors={latencyTrend?.invertColors}
+            tone={latencyTone}
+            className="col-span-6 lg:col-span-3"
+          />
+          <MetricCard
+            title="Success rate"
+            value={successRate}
+            trend={successTrend?.direction}
+            trendValue={successTrend?.label}
+            invertTrendColors={successTrend?.invertColors}
+            className="col-span-6 lg:col-span-3"
+          />
+          </div>
+
+          <ActiveAlertsStrip
+            events={activeAlerts}
+            orgSlug={orgSlug}
+            projectSlug={projectSlug}
+          />
+
+          <NeedsAttentionPanel
+            services={attentionServices}
+            endpoints={attentionEndpoints}
+            orgSlug={orgSlug}
+            projectSlug={projectSlug}
+            timeRange={effectiveTimeRange}
+            environment={environment}
+          />
+
+          <div className="grid grid-cols-12 gap-4">
           {/* Row 2: Main charts */}
           <ThroughputWidget
             data={dashboardData.requests_per_minute}
@@ -295,6 +530,10 @@ function DashboardPageInner() {
           {/* Row 3: Secondary charts */}
           <ErrorsTimelineWidget
             data={dashboardData.errors_per_minute}
+            orgSlug={orgSlug}
+            projectSlug={projectSlug}
+            timeRange={effectiveTimeRange}
+            environment={environment}
             className="col-span-12 lg:col-span-6"
           />
           <LatencyDistributionWidget
@@ -308,13 +547,22 @@ function DashboardPageInner() {
           {/* Row 4: Lists and service status */}
           <TopEndpointsWidget
             endpoints={endpointData}
+            orgSlug={orgSlug}
+            projectSlug={projectSlug}
+            timeRange={effectiveTimeRange}
+            environment={environment}
             className="col-span-12 lg:col-span-7"
           />
           <ServiceStatusWidget
             services={dashboardData.services}
+            orgSlug={orgSlug}
+            projectSlug={projectSlug}
+            timeRange={effectiveTimeRange}
+            environment={environment}
             className="col-span-12 lg:col-span-5"
           />
         </div>
+        </>
       )}
     </div>
   );

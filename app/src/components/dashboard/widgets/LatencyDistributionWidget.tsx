@@ -1,6 +1,5 @@
 "use client";
 
-import { motion } from "framer-motion";
 import {
   ResponsiveContainer,
   BarChart,
@@ -10,12 +9,9 @@ import {
   Tooltip,
   CartesianGrid,
 } from "recharts";
-
-export interface LatencyBucket {
-  range: string;
-  count: number;
-  label: string;
-}
+import { DashboardPanel } from "@/components/dashboard/DashboardPanel";
+import { DASHBOARD_CHART } from "@/lib/dashboardChartTheme";
+import type { LatencyBucket } from "@/types/dashboard";
 
 interface LatencyDistributionWidgetProps {
   data: LatencyBucket[];
@@ -25,15 +21,10 @@ interface LatencyDistributionWidgetProps {
   className?: string;
 }
 
-/**
- * Latency distribution histogram showing response time distribution.
- * Includes percentile reference lines for p50, p95, p99.
- */
 export function LatencyDistributionWidget({
   data,
   p50,
   p95,
-  p99,
   className,
 }: LatencyDistributionWidgetProps) {
   const formatLatency = (ms: number) => {
@@ -41,76 +32,61 @@ export function LatencyDistributionWidget({
     return `${Math.round(ms)}ms`;
   };
 
-  return (
-    <motion.div
-      data-testid="latency-distribution-widget"
-      className={className}
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.25 }}
-    >
-      <div className="rounded-xl border bg-card p-4 h-full">
-        <div className="flex items-center justify-between mb-2">
-          <h3 className="text-sm font-medium text-muted-foreground">Latency Distribution</h3>
-          <div className="flex items-center gap-3 text-xs">
-            {p50 !== undefined && (
-              <span className="text-muted-foreground">
-                p50: <span className="font-medium text-foreground">{formatLatency(p50)}</span>
-              </span>
-            )}
-            {p95 !== undefined && (
-              <span className="text-muted-foreground">
-                p95: <span className="font-medium text-foreground">{formatLatency(p95)}</span>
-              </span>
-            )}
-            {p99 !== undefined && (
-              <span className="text-muted-foreground">
-                p99: <span className="font-medium text-foreground">{formatLatency(p99)}</span>
-              </span>
-            )}
-          </div>
-        </div>
+  const summary =
+    p50 !== undefined && p95 !== undefined
+      ? `p50 ${formatLatency(p50)} · p95 ${formatLatency(p95)}`
+      : undefined;
 
-        <div className="h-[160px]">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={data} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-              <XAxis
-                dataKey="label"
-                tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
-                tickLine={false}
-                axisLine={false}
-                interval={0}
-                angle={-45}
-                textAnchor="end"
-                height={50}
-              />
-              <YAxis
-                tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
-                tickLine={false}
-                axisLine={false}
-                width={40}
-              />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: "hsl(var(--card))",
-                  border: "1px solid hsl(var(--border))",
-                  borderRadius: "8px",
-                  fontSize: "12px",
-                }}
-                formatter={(value) => [`${Number(value).toLocaleString()} requests`, "Count"]}
-              />
-              <Bar
-                dataKey="count"
-                fill="hsl(var(--chart-1))"
-                radius={[4, 4, 0, 0]}
-                maxBarSize={40}
-              />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
+  return (
+    <DashboardPanel
+      title="Latency"
+      testId="latency-distribution-widget"
+      className={className}
+      action={
+        summary ? (
+          <span className="text-xs tabular-nums text-muted-foreground">{summary}</span>
+        ) : undefined
+      }
+    >
+      <div className="h-[160px]">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={data} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke={DASHBOARD_CHART.grid} vertical={false} />
+            <XAxis
+              dataKey="label"
+              tick={{ fontSize: 10, fill: DASHBOARD_CHART.axis }}
+              tickLine={false}
+              axisLine={false}
+              interval={0}
+              angle={-40}
+              textAnchor="end"
+              height={48}
+            />
+            <YAxis
+              tick={{ fontSize: 10, fill: DASHBOARD_CHART.axis }}
+              tickLine={false}
+              axisLine={false}
+              width={36}
+            />
+            <Tooltip
+              contentStyle={{
+                backgroundColor: "var(--card)",
+                border: "1px solid var(--border)",
+                borderRadius: "6px",
+                fontSize: "12px",
+              }}
+              formatter={(value) => [`${Number(value).toLocaleString()}`, "Requests"]}
+            />
+            <Bar
+              dataKey="count"
+              fill={DASHBOARD_CHART.bar}
+              radius={[2, 2, 0, 0]}
+              maxBarSize={32}
+            />
+          </BarChart>
+        </ResponsiveContainer>
       </div>
-    </motion.div>
+    </DashboardPanel>
   );
 }
 

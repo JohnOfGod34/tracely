@@ -37,6 +37,13 @@ export interface LiveDashboardResponse {
   services: ServiceStatus[];
 }
 
+export interface PeriodSummary {
+  total_requests: number;
+  total_errors: number;
+  error_rate: number;
+  p95_latency: number;
+}
+
 export interface DashboardMetricsResponse {
   // Time series data
   requests_per_minute: DataPoint[];
@@ -58,4 +65,10 @@ export interface DashboardMetricsResponse {
 
   // Service health
   services: ServiceStatus[];
+
+  /** Aggregates for the immediately preceding window of equal duration. */
+  previous_period?: PeriodSummary | null;
+
+  /** Distinct environments seen in the last 7 days. */
+  available_environments?: string[];
 }

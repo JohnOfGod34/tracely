@@ -4,8 +4,8 @@ import { formatDuration } from "@/lib/formatDuration";
 import type { SpanEvent } from "@/types/span";
 
 function statusColorClass(code: number): string {
-  if (code >= 200 && code < 300) return "text-emerald-500";
-  if (code >= 400) return "text-red-500";
+  if (code >= 200 && code < 300) return "text-success";
+  if (code >= 400) return "text-destructive";
   return "text-muted-foreground";
 }
 
@@ -57,7 +57,7 @@ export const ChildSpanRow = memo(function ChildSpanRow({
       }}
       className={cn(
         "flex items-center gap-2 py-1.5 px-3 sm:px-4 text-xs font-mono border-b border-border/30 cursor-pointer transition-colors hover:bg-accent/30",
-        hasError && "text-red-500",
+        hasError && "text-destructive",
         isSelected && "bg-accent/50"
       )}
     >
@@ -92,7 +92,7 @@ export const ChildSpanRow = memo(function ChildSpanRow({
       </span>
 
       {/* Operation name — flex */}
-      <span className={cn("min-w-0 flex-1 truncate", hasError ? "text-red-500" : "text-muted-foreground")}>
+      <span className={cn("min-w-0 flex-1 truncate", hasError ? "text-destructive" : "text-muted-foreground")}>
         {operationName}
       </span>
 

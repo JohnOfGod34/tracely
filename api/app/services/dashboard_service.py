@@ -14,6 +14,7 @@ from app.schemas.dashboard import (
     HealthStatus,
     LatencyBucket,
     LiveDashboardResponse,
+    PeriodSummary,
     ServiceHealth,
     ServiceStatus,
     StatusCodeStats,
@@ -29,6 +30,62 @@ ERROR_RATE_GREEN = 1.0  # < 1% error rate = healthy
 ERROR_RATE_YELLOW = 5.0  # < 5% error rate = degraded
 P95_GREEN = 500.0  # < 500ms p95 = healthy
 P95_YELLOW = 2000.0  # < 2000ms p95 = degraded
+
+_HTTP_ROUTE_NORM_SQL = """
+multiIf(
+    trim(http_route) = '' OR trim(http_route) = '/',
+    '/',
+    endsWith(trim(http_route), '/') AND length(trim(http_route)) > 1,
+    left(trim(http_route), length(trim(http_route)) - 1),
+    trim(http_route)
+)
+"""
+
+_HTTP_METHOD_NORM_SQL = "if(empty(http_method), 'GET', http_method)"
+
+
+def _normalize_http_route(route: str | None) -> str:
+    r = (route or "/").strip()
+    if not r.startswith("/"):
+        r = f"/{r}"
+    if len(r) > 1 and r.endswith("/"):
+        r = r.rstrip("/") or "/"
+    return r or "/"
+
+
+def _normalize_http_method(method: str | None) -> str:
+    m = (method or "GET").strip().upper()
+    return m or "GET"
+
+
+def _merge_endpoint_stats(rows: list[EndpointStats]) -> list[EndpointStats]:
+    """Merge rows that share normalized method + route."""
+    merged: dict[tuple[str, str], EndpointStats] = {}
+    for ep in rows:
+        method = _normalize_http_method(ep.method)
+        route = _normalize_http_route(ep.route)
+        key = (method, route)
+        prev = merged.get(key)
+        if prev is None:
+            merged[key] = ep.model_copy(update={"method": method, "route": route})
+            continue
+        total = prev.count + ep.count
+        merged[key] = EndpointStats(
+            route=route,
+            method=method,
+            count=total,
+            avg_latency=round(
+                (prev.avg_latency * prev.count + ep.avg_latency * ep.count) / total, 2
+            )
+            if total
+            else 0.0,
+            error_rate=round(
+                (prev.error_rate * prev.count + ep.error_rate * ep.count) / total, 2
+            )
+            if total
+            else 0.0,
+        )
+    return sorted(merged.values(), key=lambda item: item.count, reverse=True)
 
 
 def _calculate_health_status(error_rate: float, p95_latency: float) -> HealthStatus:
@@ -305,14 +362,37 @@ async def get_live_dashboard(
 METRICS_CACHE_TTL = 10  # 10 second TTL for dashboard metrics
 
 
-def _metrics_cache_key(project_id: UUID, preset: str, start: str | None, end: str | None) -> str:
+def _metrics_cache_key(
+    project_id: UUID,
+    preset: str,
+    start: str | None,
+    end: str | None,
+    environment: str | None = None,
+) -> str:
     """Generate Redis cache key for dashboard metrics."""
     key_parts = [f"dashboard:metrics:{project_id}:{preset}"]
+    if environment:
+        key_parts.append(f"env:{environment}")
     if start:
         key_parts.append(start[:16])  # Truncate for key size
     if end:
         key_parts.append(end[:16])
     return ":".join(key_parts)
+
+
+def _env_clause(environment: str | None) -> str:
+    """SQL fragment to filter spans by deployment environment."""
+    if not environment:
+        return ""
+    if environment == "unknown":
+        return "AND environment = ''"
+    safe = environment.replace("'", "''")
+    return f"AND environment = '{safe}'"
+
+
+_SPANS_BASE_FILTER = (
+    "span_type = 'span' AND kind IN ('SERVER', 'INTERNAL')"
+)
 
 
 def _get_time_interval(preset: str) -> str:
@@ -325,6 +405,103 @@ def _get_time_interval(preset: str) -> str:
         "24h": "24 HOUR",
     }
     return intervals.get(preset, "15 MINUTE")
+
+
+def _get_previous_period_filters(
+    preset: str,
+    start: str | None,
+    end: str | None,
+) -> tuple[str, str] | None:
+    """Return time/bucket filters for the window immediately before the current range."""
+    if preset == "custom" and start and end:
+        time_filter = (
+            f"start_time >= toDateTime('{start}') - (toDateTime('{end}') - toDateTime('{start}')) "
+            f"AND start_time < toDateTime('{start}')"
+        )
+        bucket_filter = (
+            f"time_bucket >= toDateTime('{start}') - (toDateTime('{end}') - toDateTime('{start}')) "
+            f"AND time_bucket < toDateTime('{start}')"
+        )
+        return time_filter, bucket_filter
+
+    if preset == "custom":
+        return None
+
+    interval = _get_time_interval(preset)
+    minutes_map = {
+        "5 MINUTE": 5,
+        "15 MINUTE": 15,
+        "1 HOUR": 60,
+        "6 HOUR": 360,
+        "24 HOUR": 1440,
+    }
+    minutes = minutes_map.get(interval, 15)
+    double_minutes = minutes * 2
+    time_filter = (
+        f"start_time >= now() - INTERVAL {double_minutes} MINUTE "
+        f"AND start_time < now() - INTERVAL {minutes} MINUTE"
+    )
+    bucket_filter = (
+        f"time_bucket >= now() - INTERVAL {double_minutes} MINUTE "
+        f"AND time_bucket < now() - INTERVAL {minutes} MINUTE"
+    )
+    return time_filter, bucket_filter
+
+
+async def _fetch_period_summary(
+    org_id: UUID,
+    project_id: UUID,
+    time_filter: str,
+    bucket_filter: str,
+    environment: str | None = None,
+) -> PeriodSummary:
+    """Run aggregate query for a single time window."""
+    params = {
+        "org_id": str(org_id),
+        "project_id": str(project_id),
+    }
+    env_sql = _env_clause(environment)
+
+    if env_sql:
+        aggregates_query = f"""
+        SELECT
+            count() AS total_requests,
+            countIf(status_code = 'ERROR') AS total_errors,
+            quantile(0.95)(duration_ms) AS p95_ms
+        FROM spans
+        WHERE org_id = %(org_id)s
+          AND project_id = %(project_id)s
+          AND {_SPANS_BASE_FILTER}
+          AND {time_filter}
+          {env_sql}
+        """
+    else:
+        aggregates_query = f"""
+        SELECT
+            countMerge(request_count) AS total_requests,
+            countMerge(error_count) AS total_errors,
+            quantileMerge(0.95)(p95_duration) AS p95_ms
+        FROM metrics_1m
+        WHERE org_id = %(org_id)s
+          AND project_id = %(project_id)s
+          AND {bucket_filter}
+        """
+    result = await ch_query(aggregates_query, parameters=params)
+    if not result.result_rows:
+        return PeriodSummary()
+
+    total_requests, total_errors, p95_ms = result.result_rows[0]
+    total_requests = int(total_requests or 0)
+    total_errors = int(total_errors or 0)
+    error_rate = (
+        round((total_errors / total_requests) * 100, 2) if total_requests > 0 else 0.0
+    )
+    return PeriodSummary(
+        total_requests=total_requests,
+        total_errors=total_errors,
+        error_rate=error_rate,
+        p95_latency=round(p95_ms or 0.0, 2),
+    )
 
 
 def _build_latency_buckets() -> list[LatencyBucket]:
@@ -346,6 +523,7 @@ async def get_dashboard_metrics(
     preset: str = "15m",
     start: str | None = None,
     end: str | None = None,
+    environment: str | None = None,
 ) -> DashboardMetricsResponse:
     """Get comprehensive dashboard metrics for bento grid layout.
 
@@ -363,7 +541,7 @@ async def get_dashboard_metrics(
     Returns:
         DashboardMetricsResponse with all bento grid data
     """
-    cache_key = _metrics_cache_key(project_id, preset, start, end)
+    cache_key = _metrics_cache_key(project_id, preset, start, end, environment)
 
     # Try cache first
     cached = await cache_get(cache_key)
@@ -388,6 +566,9 @@ async def get_dashboard_metrics(
         "project_id": str(project_id),
     }
 
+    env_sql = _env_clause(environment)
+    use_spans_metrics = bool(env_sql)
+
     # Initialize response data
     requests_per_minute: list[DataPoint] = []
     errors_per_minute: list[DataPoint] = []
@@ -402,21 +583,38 @@ async def get_dashboard_metrics(
     top_endpoints: list[EndpointStats] = []
     latency_distribution = _build_latency_buckets()
     services: list[ServiceStatus] = []
+    available_environments: list[str] = []
 
     try:
         # Query 1: Time series requests per minute
-        sparkline_query = f"""
-        SELECT
-            time_bucket,
-            countMerge(request_count) AS requests,
-            countMerge(error_count) AS errors
-        FROM metrics_1m
-        WHERE org_id = %(org_id)s
-          AND project_id = %(project_id)s
-          AND {bucket_filter}
-        GROUP BY time_bucket
-        ORDER BY time_bucket ASC
-        """
+        if use_spans_metrics:
+            sparkline_query = f"""
+            SELECT
+                toStartOfMinute(start_time) AS time_bucket,
+                count() AS requests,
+                countIf(status_code = 'ERROR') AS errors
+            FROM spans
+            WHERE org_id = %(org_id)s
+              AND project_id = %(project_id)s
+              AND {_SPANS_BASE_FILTER}
+              AND {time_filter}
+              {env_sql}
+            GROUP BY time_bucket
+            ORDER BY time_bucket ASC
+            """
+        else:
+            sparkline_query = f"""
+            SELECT
+                time_bucket,
+                countMerge(request_count) AS requests,
+                countMerge(error_count) AS errors
+            FROM metrics_1m
+            WHERE org_id = %(org_id)s
+              AND project_id = %(project_id)s
+              AND {bucket_filter}
+            GROUP BY time_bucket
+            ORDER BY time_bucket ASC
+            """
         sparkline_result = await ch_query(sparkline_query, parameters=params)
 
         for row in sparkline_result.result_rows:
@@ -429,20 +627,36 @@ async def get_dashboard_metrics(
             )
 
         # Query 2: Aggregates (totals, percentiles)
-        # Note: p99 uses p95 as approximation since metrics_1m only tracks p50/p95
-        aggregates_query = f"""
-        SELECT
-            countMerge(request_count) AS total_requests,
-            countMerge(error_count) AS total_errors,
-            avgMerge(avg_duration) AS avg_ms,
-            quantileMerge(0.5)(p50_duration) AS p50_ms,
-            quantileMerge(0.95)(p95_duration) AS p95_ms,
-            maxMerge(max_duration) AS p99_ms
-        FROM metrics_1m
-        WHERE org_id = %(org_id)s
-          AND project_id = %(project_id)s
-          AND {bucket_filter}
-        """
+        if use_spans_metrics:
+            aggregates_query = f"""
+            SELECT
+                count() AS total_requests,
+                countIf(status_code = 'ERROR') AS total_errors,
+                avg(duration_ms) AS avg_ms,
+                quantile(0.5)(duration_ms) AS p50_ms,
+                quantile(0.95)(duration_ms) AS p95_ms,
+                max(duration_ms) AS p99_ms
+            FROM spans
+            WHERE org_id = %(org_id)s
+              AND project_id = %(project_id)s
+              AND {_SPANS_BASE_FILTER}
+              AND {time_filter}
+              {env_sql}
+            """
+        else:
+            aggregates_query = f"""
+            SELECT
+                countMerge(request_count) AS total_requests,
+                countMerge(error_count) AS total_errors,
+                avgMerge(avg_duration) AS avg_ms,
+                quantileMerge(0.5)(p50_duration) AS p50_ms,
+                quantileMerge(0.95)(p95_duration) AS p95_ms,
+                maxMerge(max_duration) AS p99_ms
+            FROM metrics_1m
+            WHERE org_id = %(org_id)s
+              AND project_id = %(project_id)s
+              AND {bucket_filter}
+            """
         agg_result = await ch_query(aggregates_query, parameters=params)
 
         if agg_result.result_rows:
@@ -472,6 +686,7 @@ async def get_dashboard_metrics(
           AND project_id = %(project_id)s
           AND {time_filter}
           AND http_status_code > 0
+          {env_sql}
         GROUP BY status_group
         ORDER BY status_group
         """
@@ -485,8 +700,8 @@ async def get_dashboard_metrics(
         # Query 4: Top endpoints
         endpoints_query = f"""
         SELECT
-            http_route,
-            http_method,
+            {_HTTP_ROUTE_NORM_SQL} AS http_route,
+            {_HTTP_METHOD_NORM_SQL} AS http_method,
             count() AS cnt,
             avg(duration_ms) AS avg_ms,
             countIf(status_code = 'ERROR') / count() * 100 AS err_rate
@@ -495,7 +710,8 @@ async def get_dashboard_metrics(
           AND project_id = %(project_id)s
           AND {time_filter}
           AND http_route != ''
-        GROUP BY http_route, http_method
+          {env_sql}
+        GROUP BY {_HTTP_ROUTE_NORM_SQL}, {_HTTP_METHOD_NORM_SQL}
         ORDER BY cnt DESC
         LIMIT 10
         """
@@ -505,13 +721,14 @@ async def get_dashboard_metrics(
             route, method, count, avg_ms, err_rate = row
             top_endpoints.append(
                 EndpointStats(
-                    route=route or "/",
-                    method=method or "GET",
+                    route=_normalize_http_route(route or "/"),
+                    method=_normalize_http_method(method),
                     count=int(count),
                     avg_latency=round(avg_ms or 0.0, 2),
                     error_rate=round(err_rate or 0.0, 2),
                 )
             )
+        top_endpoints = _merge_endpoint_stats(top_endpoints)[:10]
 
         # Query 5: Latency distribution
         latency_query = f"""
@@ -530,6 +747,7 @@ async def get_dashboard_metrics(
         WHERE org_id = %(org_id)s
           AND project_id = %(project_id)s
           AND {time_filter}
+          {env_sql}
         GROUP BY bucket
         ORDER BY bucket
         """
@@ -545,24 +763,50 @@ async def get_dashboard_metrics(
                 )
 
         # Query 6: Service status
-        services_query = f"""
-        SELECT
-            service_name,
-            countMerge(request_count) AS total_requests,
-            countMerge(error_count) AS total_errors,
-            quantileMerge(0.95)(p95_duration) AS p95_ms
-        FROM metrics_1m
-        WHERE org_id = %(org_id)s
-          AND project_id = %(project_id)s
-          AND {bucket_filter}
-        GROUP BY service_name
-        ORDER BY total_requests DESC
-        """
+        if use_spans_metrics:
+            services_query = f"""
+            SELECT
+                service_name,
+                count() AS total_requests,
+                countIf(status_code = 'ERROR') AS total_errors,
+                quantile(0.95)(duration_ms) AS p95_ms
+            FROM spans
+            WHERE org_id = %(org_id)s
+              AND project_id = %(project_id)s
+              AND {_SPANS_BASE_FILTER}
+              AND {time_filter}
+              {env_sql}
+            GROUP BY service_name
+            ORDER BY total_requests DESC
+            """
+        else:
+            services_query = f"""
+            SELECT
+                service_name,
+                countMerge(request_count) AS total_requests,
+                countMerge(error_count) AS total_errors,
+                quantileMerge(0.95)(p95_duration) AS p95_ms
+            FROM metrics_1m
+            WHERE org_id = %(org_id)s
+              AND project_id = %(project_id)s
+              AND {bucket_filter}
+            GROUP BY service_name
+            ORDER BY total_requests DESC
+            """
         services_result = await ch_query(services_query, parameters=params)
 
         for row in services_result.result_rows:
             service_name, svc_requests, svc_errors, svc_p95 = row
-            svc_request_rate = svc_requests / 5.0 if svc_requests > 0 else 0.0
+            preset_minutes = {
+                "5m": 5,
+                "15m": 15,
+                "1h": 60,
+                "6h": 360,
+                "24h": 1440,
+            }.get(preset, 15)
+            svc_request_rate = (
+                svc_requests / preset_minutes if svc_requests > 0 else 0.0
+            )
             svc_error_rate = (
                 (svc_errors / svc_requests * 100) if svc_requests > 0 else 0.0
             )
@@ -578,10 +822,38 @@ async def get_dashboard_metrics(
                 )
             )
 
+        envs_query = f"""
+        SELECT DISTINCT environment
+        FROM spans
+        WHERE org_id = %(org_id)s
+          AND project_id = %(project_id)s
+          AND start_time >= now() - INTERVAL 7 DAY
+        ORDER BY environment ASC
+        """
+        envs_result = await ch_query(envs_query, parameters=params)
+        for row in envs_result.result_rows:
+            raw = row[0] or ""
+            available_environments.append(raw if raw else "unknown")
+
     except RuntimeError:
         logger.warning("ClickHouse unavailable, returning empty dashboard metrics")
     except Exception:
         logger.exception("ClickHouse query failed for dashboard metrics")
+
+    previous_period: PeriodSummary | None = None
+    prev_filters = _get_previous_period_filters(preset, start, end)
+    if prev_filters:
+        _prev_time_filter, prev_bucket_filter = prev_filters
+        try:
+            previous_period = await _fetch_period_summary(
+                org_id,
+                project_id,
+                _prev_time_filter,
+                prev_bucket_filter,
+                environment,
+            )
+        except Exception:
+            logger.exception("ClickHouse query failed for previous period comparison")
 
     response = DashboardMetricsResponse(
         requests_per_minute=requests_per_minute,
@@ -597,6 +869,8 @@ async def get_dashboard_metrics(
         top_endpoints=top_endpoints,
         latency_distribution=latency_distribution,
         services=services,
+        previous_period=previous_period,
+        available_environments=available_environments,
     )
 
     # Cache the result

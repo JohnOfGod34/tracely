@@ -20,6 +20,8 @@ interface TimeframeSelectorProps {
   className?: string;
   /** Whether to show inline (horizontal) or as dropdown */
   variant?: "inline" | "dropdown";
+  /** Visual style for inline preset buttons */
+  appearance?: "pill" | "segmented";
 }
 
 /**
@@ -31,6 +33,7 @@ export function TimeframeSelector({
   onTimeRangeChange,
   className,
   variant = "inline",
+  appearance = "pill",
 }: TimeframeSelectorProps) {
   const handlePresetChange = useCallback(
     (preset: TimeRangePreset) => {
@@ -108,19 +111,39 @@ export function TimeframeSelector({
     );
   }
 
-  // Inline variant - pill buttons
+  // Inline variant
+  const isSegmented = appearance === "segmented";
+
   return (
-    <div className={cn("flex flex-wrap items-center gap-1", className)}>
+    <div
+      className={cn(
+        "flex flex-wrap items-center gap-1",
+        isSegmented && "rounded-md border border-border p-0.5",
+        className
+      )}
+      role="group"
+      aria-label="Time range"
+    >
       {TIME_PRESETS.filter((p) => p.key !== "custom").map((preset) => (
         <button
           key={preset.key}
           type="button"
           onClick={() => handlePresetChange(preset.key)}
           className={cn(
-            "px-3 py-1.5 text-sm font-medium rounded-full transition-colors",
-            timeRange.preset === preset.key
-              ? "bg-primary text-primary-foreground"
-              : "bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+            "min-h-9 px-2.5 text-xs font-medium transition-colors",
+            isSegmented
+              ? cn(
+                  "rounded-sm",
+                  timeRange.preset === preset.key
+                    ? "bg-muted text-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                )
+              : cn(
+                  "rounded-full px-3 py-1.5 text-sm",
+                  timeRange.preset === preset.key
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                )
           )}
         >
           {preset.label}
@@ -130,10 +153,20 @@ export function TimeframeSelector({
         type="button"
         onClick={() => handlePresetChange("custom")}
         className={cn(
-          "px-3 py-1.5 text-sm font-medium rounded-full transition-colors",
-          timeRange.preset === "custom"
-            ? "bg-primary text-primary-foreground"
-            : "bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+          "min-h-9 px-2.5 text-xs font-medium transition-colors",
+          isSegmented
+            ? cn(
+                "rounded-sm",
+                timeRange.preset === "custom"
+                  ? "bg-muted text-foreground"
+                  : "text-muted-foreground hover:text-foreground"
+              )
+            : cn(
+                "rounded-full px-3 py-1.5 text-sm",
+                timeRange.preset === "custom"
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+              )
         )}
       >
         Custom

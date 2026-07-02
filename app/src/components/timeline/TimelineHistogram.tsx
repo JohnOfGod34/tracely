@@ -206,15 +206,15 @@ export function TimelineHistogram({
                     y1={y}
                     x2={chartWidth}
                     y2={y}
-                    stroke="#3f3f46"
-                    strokeOpacity={0.35}
+                    stroke="var(--border)"
+                    strokeOpacity={0.85}
                   />
                   <text
                     x={-6}
                     y={y + 3}
                     textAnchor="end"
                     fontSize={10}
-                    fill="#a1a1aa"
+                    fill="var(--muted-foreground)"
                   >
                     {formatYAxis(tick)}
                   </text>
@@ -246,7 +246,7 @@ export function TimelineHistogram({
                       y={baseY - totalHeight}
                       width={barWidth}
                       height={successHeight}
-                      fill="#10b981"
+                      fill="var(--success)"
                     />
                   )}
                   {errorHeight > 0 && (
@@ -255,7 +255,7 @@ export function TimelineHistogram({
                       y={baseY - totalHeight + successHeight}
                       width={barWidth}
                       height={errorHeight}
-                      fill="#ef4444"
+                      fill="var(--destructive)"
                       rx={successHeight <= 0 ? 2 : 0}
                       ry={successHeight <= 0 ? 2 : 0}
                     />
@@ -266,8 +266,8 @@ export function TimelineHistogram({
                       y={0}
                       width={barWidth}
                       height={chartHeight}
-                      fill="#6366f1"
-                      fillOpacity={0.08}
+                      fill="var(--foreground)"
+                      fillOpacity={0.06}
                     />
                   )}
                 </g>
@@ -281,7 +281,7 @@ export function TimelineHistogram({
                 y1={0}
                 x2={timestampToX(rangeEnd, rangeStart, rangeEnd, chartWidth)}
                 y2={chartHeight}
-                stroke="#22c55e"
+                stroke="var(--success)"
                 strokeWidth={2}
                 strokeDasharray="4 2"
               />
@@ -294,10 +294,10 @@ export function TimelineHistogram({
                 y={0}
                 width={dragX2 - dragX1}
                 height={chartHeight}
-                fill="#6366f1"
-                fillOpacity={0.15}
-                stroke="#6366f1"
-                strokeOpacity={0.4}
+                fill="var(--foreground)"
+                fillOpacity={0.08}
+                stroke="var(--foreground)"
+                strokeOpacity={0.25}
               />
             )}
 
@@ -307,7 +307,7 @@ export function TimelineHistogram({
               y1={chartHeight}
               x2={chartWidth}
               y2={chartHeight}
-              stroke="#3f3f46"
+              stroke="var(--border)"
             />
 
             {/* X-axis ticks */}
@@ -320,14 +320,14 @@ export function TimelineHistogram({
                     y1={chartHeight}
                     x2={x}
                     y2={chartHeight + 4}
-                    stroke="#3f3f46"
+                    stroke="var(--border)"
                   />
                   <text
                     x={x}
                     y={chartHeight + 14}
                     textAnchor="middle"
                     fontSize={10}
-                    fill="#a1a1aa"
+                    fill="var(--muted-foreground)"
                   >
                     {formatBucketTimestamp(ts, granularity)}
                   </text>
@@ -343,11 +343,11 @@ export function TimelineHistogram({
         <div className="pointer-events-none absolute left-1/2 top-1 z-10 -translate-x-1/2 rounded border border-border bg-popover px-2 py-1 text-xs shadow-md">
           <div className="flex items-center gap-3">
             <span className="flex items-center gap-1">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              <span className="h-1.5 w-1.5 rounded-full bg-success" />
               <span className="text-foreground">{hovered.successCount}</span>
             </span>
             <span className="flex items-center gap-1">
-              <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
+              <span className="h-1.5 w-1.5 rounded-full bg-destructive" />
               <span className="text-foreground">{hovered.errorCount}</span>
             </span>
           </div>

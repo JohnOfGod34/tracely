@@ -80,6 +80,7 @@ async def get_dashboard_metrics(
     time: str = Query("15m", description="Time preset: 5m, 15m, 1h, 6h, 24h, or custom"),
     start: str | None = Query(None, description="Custom range start (ISO 8601)"),
     end: str | None = Query(None, description="Custom range end (ISO 8601)"),
+    env: str | None = Query(None, description="Filter by deployment environment"),
     org_id=Depends(get_current_org),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
@@ -106,7 +107,7 @@ async def get_dashboard_metrics(
 
     # Fetch dashboard metrics with timeframe
     metrics = await dashboard_service.get_dashboard_metrics(
-        org_id, project.id, preset=time, start=start, end=end
+        org_id, project.id, preset=time, start=start, end=end, environment=env
     )
 
     return success(metrics.model_dump(mode="json"))
