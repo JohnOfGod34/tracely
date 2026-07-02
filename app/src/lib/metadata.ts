@@ -3,7 +3,11 @@ import { cookies } from "next/headers";
 import type { SpanEvent } from "@/types/span";
 import type { DataEnvelope } from "@/types/api";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+/** Server-side only — use internal Docker hostname when available. */
+const SERVER_API_BASE =
+  process.env.API_URL ??
+  process.env.NEXT_PUBLIC_API_URL ??
+  "http://localhost:8000";
 
 interface OrgInfo {
   id: string;
@@ -31,7 +35,7 @@ async function serverFetch<T>(path: string): Promise<T | null> {
       .map((c) => `${c.name}=${c.value}`)
       .join("; ");
 
-    const res = await fetch(`${API_BASE}${path}`, {
+    const res = await fetch(`${SERVER_API_BASE}${path}`, {
       headers: {
         "Content-Type": "application/json",
         Cookie: cookieHeader,

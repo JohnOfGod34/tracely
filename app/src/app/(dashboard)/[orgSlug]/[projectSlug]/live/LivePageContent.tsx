@@ -28,9 +28,18 @@ type DisplayItem =
 export interface LivePageClientProps {
   orgSlug: string;
   projectSlug: string;
-  projectId: string;
+  /** From server prefetch; null triggers a client-side fallback fetch. */
+  projectId: string | null;
   initialSpans: SpanEvent[];
   initialHasMoreHistory: boolean;
+}
+
+interface ProjectInfo {
+  id: string;
+  name: string;
+  slug: string;
+  org_id: string;
+  created_at: string;
 }
 
 interface ApiKeyItem {
@@ -604,10 +613,40 @@ export default function LivePageClient({
 function LivePageInner({
   orgSlug,
   projectSlug,
-  projectId,
+  projectId: serverProjectId,
   initialSpans,
   initialHasMoreHistory,
 }: LivePageClientProps) {
+
+  const [projectId, setProjectId] = useState<string | null>(serverProjectId);
+  const [initialLoadDone, setInitialLoadDone] = useState(false);
+
+  // Keep in sync when navigating between projects (new server props)
+  useEffect(() => {
+    setProjectId(serverProjectId);
+  }, [serverProjectId]);
+
+  // Client fallback when SSR prefetch could not resolve the project
+  useEffect(() => {
+    if (projectId) return;
+
+    let cancelled = false;
+    async function loadProject() {
+      try {
+        const res = await apiFetch<DataEnvelope<ProjectInfo>>(
+          `/api/orgs/${orgSlug}/projects/${projectSlug}`
+        );
+        if (!cancelled) setProjectId(res.data.id);
+      } catch {
+        // Non-blocking — SSE won't connect without project ID
+      }
+    }
+
+    loadProject();
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, orgSlug, projectSlug]);
 
   const spans = useLiveStreamStore((s) => s.spans);
   const childrenMap = useLiveStreamStore((s) => s.childrenMap);
@@ -622,8 +661,6 @@ function LivePageInner({
   const setLoadingHistory = useLiveStreamStore((s) => s.setLoadingHistory);
   const setHasMoreHistory = useLiveStreamStore((s) => s.setHasMoreHistory);
   const reset = useLiveStreamStore((s) => s.reset);
-  const [initialLoadDone, setInitialLoadDone] = useState(false);
-  const bootstrapKeyRef = useRef<string | null>(null);
 
   // --- Filter state (Story 3.5, 11.2) ---
   const filters = useFilterStore((s) => s.filters);
@@ -729,7 +766,7 @@ function LivePageInner({
         });
       }
     }
-    if (env) store.setEnvironment(env);
+    if (env && env !== "unknown") store.setEnvironment(env);
     if (status) {
       const validGroups = new Set(["2xx", "3xx", "4xx", "5xx"]);
       const groups = status.split(",").filter((g) => validGroups.has(g));
@@ -751,7 +788,9 @@ function LivePageInner({
     if (filters.timeRange.preset !== "5m") params.set("time", filters.timeRange.preset);
     if (filters.timeRange.start) params.set("start", filters.timeRange.start);
     if (filters.timeRange.end) params.set("end", filters.timeRange.end);
-    if (filters.environment) params.set("env", filters.environment);
+    if (filters.environment && filters.environment !== "unknown") {
+      params.set("env", filters.environment);
+    }
     if (filters.statusGroups.length > 0) params.set("status", filters.statusGroups.join(","));
 
     const search = params.toString();
@@ -878,25 +917,73 @@ function LivePageInner({
   }, [inspectorOpen]), { allowInInputs: true });
 
   // Bootstrap store from server-prefetched spans (or re-bootstrap on project change)
+  const initialSpansKey = useMemo(
+    () => initialSpans.map((s) => s.span_id).join("\0"),
+    [initialSpans]
+  );
+
   useLayoutEffect(() => {
-    const key = `${orgSlug}/${projectSlug}/${projectId}`;
-    if (bootstrapKeyRef.current === key) return;
-    bootstrapKeyRef.current = key;
+    if (!serverProjectId) return;
 
     reset();
     if (initialSpans.length > 0) {
       prependSpans(initialSpans);
+      setHasMoreHistory(initialHasMoreHistory);
+      setInitialLoadDone(true);
     }
-    setHasMoreHistory(initialHasMoreHistory);
-    setInitialLoadDone(true);
-
-    return () => reset();
   }, [
     orgSlug,
     projectSlug,
-    projectId,
-    initialSpans,
+    serverProjectId,
+    initialSpansKey,
     initialHasMoreHistory,
+    reset,
+    prependSpans,
+    setHasMoreHistory,
+  ]);
+
+  // Reset store on unmount only (not in bootstrap cleanup — breaks React Strict Mode)
+  useEffect(() => {
+    return () => reset();
+  }, [reset]);
+
+  // Client spans fetch when SSR had no spans or prefetch failed
+  useEffect(() => {
+    if (!projectId || initialLoadDone || isHistoricalMode) return;
+
+    let cancelled = false;
+    async function loadInitial() {
+      try {
+        const url = `/api/orgs/${orgSlug}/projects/${projectSlug}/spans?limit=50`;
+        const res = await apiFetch<DataEnvelope<SpanEvent[]>>(url);
+        if (cancelled) return;
+
+        reset();
+        const fetched = res.data;
+        if (fetched.length > 0) {
+          prependSpans([...fetched].reverse());
+          const meta = res.meta as { has_more?: boolean };
+          setHasMoreHistory(meta.has_more !== false);
+        } else {
+          setHasMoreHistory(false);
+        }
+      } catch {
+        // Non-blocking
+      } finally {
+        if (!cancelled) setInitialLoadDone(true);
+      }
+    }
+
+    loadInitial();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    projectId,
+    initialLoadDone,
+    isHistoricalMode,
+    orgSlug,
+    projectSlug,
     reset,
     prependSpans,
     setHasMoreHistory,
@@ -921,8 +1008,8 @@ function LivePageInner({
   );
 
   const { status } = useEventStream({
-    projectId,
-    enabled: !isHistoricalMode,
+    projectId: projectId ?? "",
+    enabled: projectId !== null && !isHistoricalMode,
     onSpan: handleSpan,
   });
 
@@ -1154,7 +1241,9 @@ function LivePageInner({
   // never the SDK onboarding flow, which only applies when no data has ever
   // been sent at all.
   const showSkeleton =
-    !initialLoadDone || (isHistoricalMode && isLoadingHistory && spans.length === 0);
+    !projectId ||
+    !initialLoadDone ||
+    (isHistoricalMode && isLoadingHistory && spans.length === 0);
   const showEmpty = initialLoadDone && spans.length === 0 && !isHistoricalMode;
   const showHistoricalEmpty =
     initialLoadDone && spans.length === 0 && isHistoricalMode && !isLoadingHistory;

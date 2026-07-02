@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
 import LivePageClient from "./LivePageContent";
 import { getInitialSpans, getProject } from "@/lib/metadata";
 
@@ -23,17 +22,13 @@ export default async function LivePage({ params }: PageProps) {
     getInitialSpans(orgSlug, projectSlug),
   ]);
 
-  if (!project) {
-    notFound();
-  }
-
   return (
     <LivePageClient
       orgSlug={orgSlug}
       projectSlug={projectSlug}
-      projectId={project.id}
-      initialSpans={initialData.spans}
-      initialHasMoreHistory={initialData.hasMore}
+      projectId={project?.id ?? null}
+      initialSpans={project ? initialData.spans : []}
+      initialHasMoreHistory={project ? initialData.hasMore : true}
     />
   );
 }

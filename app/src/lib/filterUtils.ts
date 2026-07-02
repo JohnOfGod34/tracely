@@ -72,9 +72,12 @@ export function matchesFilters(span: SpanEvent, filters: StreamFilters): boolean
     }
   }
 
-  // Environment filter
-  if (filters.environment !== null && span.environment !== filters.environment) {
-    return false;
+  // Environment filter — empty SDK env is treated as "unknown"
+  if (filters.environment !== null) {
+    const spanEnv = span.environment || "unknown";
+    if (spanEnv !== filters.environment) {
+      return false;
+    }
   }
 
   return true;
