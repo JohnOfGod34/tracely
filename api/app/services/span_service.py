@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import asyncio
 import uuid
 from datetime import datetime
 
-from app.db.clickhouse import get_clickhouse_client
+from app.db.clickhouse import ch_query
 from app.schemas.span import SpanDetail, build_span_detail
 from app.schemas.stream import SpanSummary, TraceSpan
 
@@ -55,8 +54,6 @@ async def get_span_history(
         status_groups: Filter by HTTP status code groups (e.g. ["4xx", "5xx"]).
         endpoint_search: Filter by http_route substring (case-insensitive).
     """
-    client = get_clickhouse_client()
-
     where_clauses = [
         "org_id = %(org_id)s",
         "project_id = %(project_id)s",
@@ -107,9 +104,7 @@ async def get_span_history(
         f" LIMIT {limit}"
     )
 
-    result = await asyncio.to_thread(
-        client.query, query, parameters=params
-    )
+    result = await ch_query(query, parameters=params)
 
     if not result.result_rows:
         return []
@@ -171,8 +166,6 @@ async def get_span_by_id(
     Returns None if the span is not found or not accessible within the
     given org/project scope.
     """
-    client = get_clickhouse_client()
-
     query = (
         f"SELECT {_DETAIL_COLUMNS_SQL} FROM spans"
         " WHERE org_id = %(org_id)s"
@@ -182,8 +175,7 @@ async def get_span_by_id(
         " LIMIT 1"
     )
 
-    result = await asyncio.to_thread(
-        client.query,
+    result = await ch_query(
         query,
         parameters={
             "org_id": str(org_id),
@@ -218,8 +210,6 @@ async def get_trace_spans(
     Includes attributes (for span events / log events).
     Only returns span_type='span' (excludes pending_span).
     """
-    client = get_clickhouse_client()
-
     query = (
         f"SELECT {_TRACE_COLUMNS_SQL} FROM spans"
         " WHERE org_id = %(org_id)s"
@@ -230,8 +220,7 @@ async def get_trace_spans(
         " LIMIT 500"
     )
 
-    result = await asyncio.to_thread(
-        client.query,
+    result = await ch_query(
         query,
         parameters={
             "org_id": str(org_id),

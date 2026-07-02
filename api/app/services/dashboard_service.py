@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from uuid import UUID
 
-from app.db.clickhouse import get_clickhouse_client
+from app.db.clickhouse import ch_query
 from app.db.redis import cache_get, cache_set
 from app.schemas.dashboard import (
     DashboardMetricsResponse,
@@ -109,12 +108,7 @@ async def get_project_health(
     }
 
     try:
-        client = get_clickhouse_client()
-        result = await asyncio.to_thread(
-            client.query,
-            query,
-            parameters=params,
-        )
+        result = await ch_query(query, parameters=params)
         rows = result.result_rows
     except RuntimeError:
         # ClickHouse not initialized
@@ -248,18 +242,10 @@ async def get_live_dashboard(
     services: list[ServiceStatus] = []
 
     try:
-        client = get_clickhouse_client()
-
         # Execute all queries
-        sparkline_result = await asyncio.to_thread(
-            client.query, sparkline_query, parameters=params
-        )
-        aggregates_result = await asyncio.to_thread(
-            client.query, aggregates_query, parameters=params
-        )
-        services_result = await asyncio.to_thread(
-            client.query, services_query, parameters=params
-        )
+        sparkline_result = await ch_query(sparkline_query, parameters=params)
+        aggregates_result = await ch_query(aggregates_query, parameters=params)
+        services_result = await ch_query(services_query, parameters=params)
 
         # Process sparkline data (Task 3.2)
         for row in sparkline_result.result_rows:
@@ -418,8 +404,6 @@ async def get_dashboard_metrics(
     services: list[ServiceStatus] = []
 
     try:
-        client = get_clickhouse_client()
-
         # Query 1: Time series requests per minute
         sparkline_query = f"""
         SELECT
@@ -433,9 +417,7 @@ async def get_dashboard_metrics(
         GROUP BY time_bucket
         ORDER BY time_bucket ASC
         """
-        sparkline_result = await asyncio.to_thread(
-            client.query, sparkline_query, parameters=params
-        )
+        sparkline_result = await ch_query(sparkline_query, parameters=params)
 
         for row in sparkline_result.result_rows:
             time_bucket, requests, errors = row
@@ -461,9 +443,7 @@ async def get_dashboard_metrics(
           AND project_id = %(project_id)s
           AND {bucket_filter}
         """
-        agg_result = await asyncio.to_thread(
-            client.query, aggregates_query, parameters=params
-        )
+        agg_result = await ch_query(aggregates_query, parameters=params)
 
         if agg_result.result_rows:
             row = agg_result.result_rows[0]
@@ -495,9 +475,7 @@ async def get_dashboard_metrics(
         GROUP BY status_group
         ORDER BY status_group
         """
-        status_result = await asyncio.to_thread(
-            client.query, status_query, parameters=params
-        )
+        status_result = await ch_query(status_query, parameters=params)
 
         for row in status_result.result_rows:
             code, count = row
@@ -521,9 +499,7 @@ async def get_dashboard_metrics(
         ORDER BY cnt DESC
         LIMIT 10
         """
-        endpoints_result = await asyncio.to_thread(
-            client.query, endpoints_query, parameters=params
-        )
+        endpoints_result = await ch_query(endpoints_query, parameters=params)
 
         for row in endpoints_result.result_rows:
             route, method, count, avg_ms, err_rate = row
@@ -557,9 +533,7 @@ async def get_dashboard_metrics(
         GROUP BY bucket
         ORDER BY bucket
         """
-        latency_result = await asyncio.to_thread(
-            client.query, latency_query, parameters=params
-        )
+        latency_result = await ch_query(latency_query, parameters=params)
 
         for row in latency_result.result_rows:
             bucket_idx, count = row
@@ -584,9 +558,7 @@ async def get_dashboard_metrics(
         GROUP BY service_name
         ORDER BY total_requests DESC
         """
-        services_result = await asyncio.to_thread(
-            client.query, services_query, parameters=params
-        )
+        services_result = await ch_query(services_query, parameters=params)
 
         for row in services_result.result_rows:
             service_name, svc_requests, svc_errors, svc_p95 = row

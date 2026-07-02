@@ -3,18 +3,14 @@
 import { Suspense, useCallback, useEffect, useState, useRef } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Activity, AlertTriangle, Clock, Zap, TrendingUp, TrendingDown } from "lucide-react";
+import { Activity, AlertTriangle, Clock, Zap } from "lucide-react";
 import { apiFetch } from "@/lib/api";
-import { cn } from "@/lib/utils";
 import type { DataEnvelope } from "@/types/api";
 import type { DashboardMetricsResponse } from "@/types/dashboard";
 import type { TimeRange, TimeRangePreset } from "@/types/span";
 import { useFilterStore } from "@/stores/filterStore";
 import { TimeframeSelector } from "@/components/shared/TimeframeSelector";
 import {
-  RequestsWidget,
-  ErrorRateWidget,
-  LatencyWidget,
   ServiceStatusWidget,
   WidgetSkeleton,
   ThroughputWidget,

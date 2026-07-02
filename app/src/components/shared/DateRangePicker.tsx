@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { DayPicker, type DateRange, type DayButtonProps } from "react-day-picker";
 import { Popover as PopoverPrimitive } from "radix-ui";
 import { Calendar, ChevronLeft, ChevronRight } from "lucide-react";
@@ -47,7 +47,7 @@ function addMonths(month: Date, delta: number): Date {
 }
 
 /** Custom day cell button — colors range endpoints/middle beyond what the static classNames map can express. */
-function RangeDayButton({ day, modifiers, className, ...props }: DayButtonProps) {
+function RangeDayButton({ modifiers, className, ...props }: DayButtonProps) {
   return (
     <button
       type="button"
@@ -73,13 +73,15 @@ export function DateRangePicker({ start, end, onApply }: DateRangePickerProps) {
   const [month, setMonth] = useState<Date>(new Date());
 
   // Reset the draft to the last-applied value every time the popover opens
-  useEffect(() => {
-    if (!open) return;
-    setRange(start && end ? { from: new Date(start), to: new Date(end) } : undefined);
-    setStartTime(toTimeInputValue(start, "00:00"));
-    setEndTime(toTimeInputValue(end, "23:59"));
-    setMonth(start ? new Date(start) : new Date());
-  }, [open, start, end]);
+  function handleOpenChange(next: boolean) {
+    if (next) {
+      setRange(start && end ? { from: new Date(start), to: new Date(end) } : undefined);
+      setStartTime(toTimeInputValue(start, "00:00"));
+      setEndTime(toTimeInputValue(end, "23:59"));
+      setMonth(start ? new Date(start) : new Date());
+    }
+    setOpen(next);
+  }
 
   function handleApply() {
     if (!range?.from || !range?.to) return;
@@ -90,7 +92,7 @@ export function DateRangePicker({ start, end, onApply }: DateRangePickerProps) {
   }
 
   return (
-    <PopoverPrimitive.Root open={open} onOpenChange={setOpen}>
+    <PopoverPrimitive.Root open={open} onOpenChange={handleOpenChange}>
       <PopoverPrimitive.Trigger asChild>
         <button
           type="button"
