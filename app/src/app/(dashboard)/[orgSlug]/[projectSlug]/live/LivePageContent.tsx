@@ -899,8 +899,11 @@ function LivePageInner({
     if (filters.statusGroups.length > 0) {
       params.push(`status_groups=${encodeURIComponent(filters.statusGroups.join(","))}`);
     }
+    if (filters.endpointSearch) {
+      params.push(`endpoint_search=${encodeURIComponent(filters.endpointSearch)}`);
+    }
     return params.length > 0 ? `&${params.join("&")}` : "";
-  }, [filters.environment, filters.statusGroups]);
+  }, [filters.environment, filters.statusGroups, filters.endpointSearch]);
 
   const loadHistory = useCallback(async () => {
     if (fetchingRef.current || !projectId || !hasMoreHistory) return;
@@ -911,8 +914,12 @@ function LivePageInner({
     const oldest = currentSpans.length > 0 ? currentSpans[0].start_time : undefined;
 
     try {
+      // Larger page for "load more" than the initial view (150 vs 50) — fewer
+      // round trips needed while scrolling through history, paired with the
+      // predictive scroll trigger in StreamList so the fetch resolves before
+      // the user visually reaches the top.
       let url =
-        `/api/orgs/${orgSlug}/projects/${projectSlug}/spans?limit=50` +
+        `/api/orgs/${orgSlug}/projects/${projectSlug}/spans?limit=150` +
         (oldest ? `&before=${encodeURIComponent(oldest)}` : "");
 
       // In historical mode, bound the query to the custom range and apply server-side filters
@@ -972,7 +979,7 @@ function LivePageInner({
 
         try {
           const url =
-            `/api/orgs/${orgSlug}/projects/${projectSlug}/spans?limit=50` +
+            `/api/orgs/${orgSlug}/projects/${projectSlug}/spans?limit=150` +
             `&after=${encodeURIComponent(filters.timeRange.start!)}` +
             `&before=${encodeURIComponent(filters.timeRange.end!)}` +
             buildFilterParams();

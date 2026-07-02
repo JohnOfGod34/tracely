@@ -214,7 +214,10 @@ function StreamListInner({
         el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
       setIsAtBottom(atBottom);
 
-      if (hasScrollableContent && el.scrollTop < 100) {
+      // Predictive: trigger while there's still ~1 viewport of content above,
+      // instead of waiting until the user has visually reached the top —
+      // by the time they get there, the next page is already loaded.
+      if (hasScrollableContent && el.scrollTop < el.clientHeight) {
         onLoadHistory();
       }
     }
