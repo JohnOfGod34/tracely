@@ -11,9 +11,11 @@ import type { DataEnvelope } from "@/types/api";
 import type { SpanEvent, StreamFilters, TimeRangePreset } from "@/types/span";
 import { useEventStream } from "@/hooks/useEventStream";
 import { useSpanDetail } from "@/hooks/useSpanDetail";
+import { useHealthData } from "@/hooks/useHealthData";
 import { useLiveStreamStore } from "@/stores/liveStreamStore";
 import { useFilterStore } from "@/stores/filterStore";
 import { matchesFilters } from "@/lib/filterUtils";
+import { aggregateProjectHealthMetrics } from "@/lib/healthMetrics";
 import { StreamList } from "@/components/pulse/StreamList";
 import { STREAM_ROW_HEIGHT, STREAM_SKELETON_WIDTHS } from "@/components/pulse/streamListTypes";
 import { TimelineBar } from "@/components/timeline";
@@ -265,10 +267,7 @@ const TIME_PRESETS: { key: TimeRangePreset; label: string }[] = [
   { key: "custom", label: "Custom" },
 ];
 
-// --- Health Metrics Helpers ---
-
-// Time window for real-time metrics calculation (30 seconds)
-const REALTIME_WINDOW_MS = 30_000;
+// --- Header metrics helpers ---
 
 function formatMetricValue(value: number, decimals = 1): string {
   if (value >= 1000) return `${(value / 1000).toFixed(1)}k`;
@@ -295,11 +294,15 @@ function formatP95(ms: number): string {
 // --- Live Header (40px, AC1 UX12, Story 11.2, Story 4.1 Health) ---
 
 const LiveHeader = memo(function LiveHeader({
+  orgSlug,
+  projectSlug,
   status,
   isHistorical,
   onTimePreset,
   onCustomRangeChange,
 }: {
+  orgSlug: string;
+  projectSlug: string;
   status: "connecting" | "connected" | "disconnected";
   isHistorical?: boolean;
   onTimePreset: (preset: TimeRangePreset) => void;
@@ -316,63 +319,21 @@ const LiveHeader = memo(function LiveHeader({
     [spans, filters]
   );
 
+  const { data: healthData, isLoading: healthLoading } = useHealthData({
+    orgSlug,
+    projectSlug,
+    enabled: !isHistorical,
+  });
+
+  const aggregatedMetrics = useMemo(
+    () => aggregateProjectHealthMetrics(healthData?.services ?? []),
+    [healthData]
+  );
+
   // Custom range with only one bound picked — historical mode won't activate yet (AC5)
   const isCustomRangeIncomplete =
     filters.timeRange.preset === "custom" &&
     !!filters.timeRange.start !== !!filters.timeRange.end;
-
-  // Real-time metrics from live span stream (instant reactivity)
-  const childrenMap = useLiveStreamStore((s) => s.childrenMap);
-
-  // State-based current time for pure useMemo computation
-  const [currentTime, setCurrentTime] = useState(() => Date.now());
-  useEffect(() => {
-    const interval = setInterval(() => setCurrentTime(Date.now()), 5000);
-    return () => clearInterval(interval);
-  }, []);
-
-  // Compute real-time metrics from recent spans
-  const aggregatedMetrics = useMemo(() => {
-    const cutoff = currentTime - REALTIME_WINDOW_MS;
-
-    // Collect all completed spans from the time window
-    const allSpans = [
-      ...spans,
-      ...Object.values(childrenMap).flat(),
-    ].filter((s) => {
-      if (s.span_type === "pending_span") return false;
-      const spanTime = new Date(s.start_time).getTime();
-      return spanTime >= cutoff;
-    });
-
-    // Need at least a few spans to show metrics
-    if (allSpans.length < 1) return null;
-
-    // Calculate request rate (spans per minute based on window)
-    const windowMinutes = REALTIME_WINDOW_MS / 60_000;
-    const totalRequestRate = allSpans.length / windowMinutes;
-
-    // Calculate error rate
-    const errorCount = allSpans.filter((s) => s.http_status_code >= 400).length;
-    const avgErrorRate = (errorCount / allSpans.length) * 100;
-
-    // Calculate p95 latency
-    const durations = allSpans
-      .map((s) => s.duration_ms)
-      .filter((d) => d > 0)
-      .sort((a, b) => a - b);
-
-    let maxP95 = 0;
-    if (durations.length > 0) {
-      const p95Index = Math.floor(durations.length * 0.95);
-      maxP95 = durations[Math.min(p95Index, durations.length - 1)];
-    }
-
-    return { totalRequestRate, avgErrorRate, maxP95 };
-  }, [spans, childrenMap, currentTime]);
-
-  // Metrics are always ready when we have spans (no loading state needed)
-  const healthLoading = false;
 
   return (
     <div className="sticky top-0 z-10 flex h-10 items-center gap-2 border-b bg-background/95 px-4 backdrop-blur-sm">
@@ -1086,6 +1047,8 @@ function LivePageInner({
         {liveAnnouncement}
       </div>
       <LiveHeader
+        orgSlug={orgSlug}
+        projectSlug={projectSlug}
         status={status}
         isHistorical={isHistoricalMode}
         onTimePreset={handleTimePreset}

@@ -39,6 +39,10 @@ jest.mock("@/hooks/useEventStream", () => ({
   useEventStream: (...args: unknown[]) => mockUseEventStream(...args),
 }));
 
+jest.mock("@/hooks/useHealthData", () => ({
+  useHealthData: () => ({ data: undefined, isLoading: false }),
+}));
+
 // Mock framer-motion to avoid animation complexities in tests
 jest.mock("framer-motion", () => ({
   motion: {
