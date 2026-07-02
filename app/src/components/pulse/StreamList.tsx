@@ -79,6 +79,7 @@ function StreamListInner({
   const expandedSpanIds = useLiveStreamStore((s) => s.expandedSpanIds);
   const isAtBottom = useLiveStreamStore((s) => s.isAtBottom);
   const isLoadingHistory = useLiveStreamStore((s) => s.isLoadingHistory);
+  const hasMoreHistory = useLiveStreamStore((s) => s.hasMoreHistory);
   const toggleExpanded = useLiveStreamStore((s) => s.toggleExpanded);
   const setIsAtBottom = useLiveStreamStore((s) => s.setIsAtBottom);
 
@@ -286,6 +287,13 @@ function StreamListInner({
               <p className="text-sm font-medium text-muted-foreground">No matching requests</p>
               <p className="mt-1 text-xs text-muted-foreground/70">Try adjusting your filters</p>
             </div>
+          </div>
+        )}
+        {showList && !showNoResults && !isLoadingHistory && !hasMoreHistory && (
+          <div className="border-b border-border/50 bg-muted/30 px-4 py-2 text-center">
+            <p className="text-xs text-muted-foreground">
+              No older items in the selected time window.
+            </p>
           </div>
         )}
         {showList && !showNoResults && (

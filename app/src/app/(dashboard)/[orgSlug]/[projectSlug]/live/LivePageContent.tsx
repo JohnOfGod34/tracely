@@ -1071,6 +1071,11 @@ function LivePageInner({
       apiFetch<DataEnvelope<SpanEvent[]>>(url)
         .then((res) => {
           if (res.data.length > 0) {
+            // Same guard loadHistory() uses: without it, this background
+            // merge can grow the list while the user is at/near the bottom
+            // and wrongly trigger the auto-scroll-to-bottom effect, snapping
+            // the view down instead of leaving the scroll position alone.
+            isHistoryPrependRef.current = true;
             prependSpans([...res.data].reverse());
             const meta = res.meta as { has_more?: boolean };
             if (!meta.has_more) setHasMoreHistory(false);
