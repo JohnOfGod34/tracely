@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback } from "react";
+import { memo, useCallback } from "react";
 import { useTimelineBuckets } from "./useTimelineBuckets";
 import { TimelineHistogram } from "./TimelineHistogram";
 import { useFilterStore } from "@/stores/filterStore";
@@ -10,7 +10,7 @@ import { useFilterStore } from "@/stores/filterStore";
  * at the top of the log explorer. Supports click-drag to select a custom
  * time range directly on the chart.
  */
-export function TimelineBar() {
+export const TimelineBar = memo(function TimelineBar() {
   const { buckets, rangeStart, rangeEnd, granularity, isLive } = useTimelineBuckets();
   const setTimeRange = useFilterStore((s) => s.setTimeRange);
 
@@ -37,4 +37,4 @@ export function TimelineBar() {
       />
     </div>
   );
-}
+});

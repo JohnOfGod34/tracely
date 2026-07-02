@@ -1,10 +1,10 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
+import { Suspense, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { useVirtualizer } from "@tanstack/react-virtual";
 import { motion, AnimatePresence } from "framer-motion";
-import { Wifi, WifiOff, ArrowDown, Check, Copy, Terminal, Code, BookOpen, RefreshCw, Clock, Search, ChevronDown, AlertTriangle, X } from "lucide-react";
+import { Wifi, WifiOff, Check, Copy, Terminal, Code, BookOpen, RefreshCw, Clock, Search, ChevronDown, AlertTriangle, X } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { DataEnvelope } from "@/types/api";
@@ -14,16 +14,27 @@ import { useSpanDetail } from "@/hooks/useSpanDetail";
 import { useLiveStreamStore } from "@/stores/liveStreamStore";
 import { useFilterStore } from "@/stores/filterStore";
 import { matchesFilters } from "@/lib/filterUtils";
-import { StreamRow } from "@/components/pulse/StreamRow";
-import { ChildSpanRow } from "@/components/pulse/ChildSpanRow";
-import { SpanInspector } from "@/components/pulse/SpanInspector";
+import { StreamList } from "@/components/pulse/StreamList";
+import { STREAM_ROW_HEIGHT, STREAM_SKELETON_WIDTHS } from "@/components/pulse/streamListTypes";
 import { TimelineBar } from "@/components/timeline";
-import { useKeyboardShortcut } from "@/hooks/useKeyboardShortcut";
-import { DateRangePicker } from "@/components/shared/DateRangePicker";
 
-type DisplayItem =
-  | { type: "root"; span: SpanEvent; childCount: number; hasErrorChildren: boolean; isExpanded: boolean }
-  | { type: "child"; span: SpanEvent; depth: number; childCount: number; isLast: boolean };
+const DateRangePicker = dynamic(
+  () =>
+    import("@/components/shared/DateRangePicker").then((m) => ({
+      default: m.DateRangePicker,
+    })),
+  {
+    loading: () => <div className="h-7 w-36 animate-pulse rounded-md bg-muted" />,
+  }
+);
+
+const SpanInspector = dynamic(
+  () =>
+    import("@/components/pulse/SpanInspector").then((m) => ({
+      default: m.SpanInspector,
+    })),
+  { ssr: false, loading: () => <div className="h-full animate-pulse bg-muted/30" /> }
+);
 
 export interface LivePageClientProps {
   orgSlug: string;
@@ -58,17 +69,12 @@ interface ApiKeyCreatedResponse {
   created_at: string;
 }
 
-const ROW_HEIGHT = 40;
-
-// Pre-computed widths for skeleton rows (pure — no Math.random during render)
-const SKELETON_WIDTHS = [55, 42, 68, 47, 60, 50, 63, 45, 57, 52, 65, 48];
-
-// --- Skeleton Loading (AC4, UX7) ---
+const ROW_HEIGHT = STREAM_ROW_HEIGHT;
 
 function PulseSkeleton() {
   return (
     <div className="flex flex-col gap-0">
-      {SKELETON_WIDTHS.map((w, i) => (
+      {STREAM_SKELETON_WIDTHS.map((w, i) => (
         <div
           key={i}
           className="flex items-center gap-3 border-b border-border/50 px-4 py-2"
@@ -288,15 +294,13 @@ function formatP95(ms: number): string {
 
 // --- Live Header (40px, AC1 UX12, Story 11.2, Story 4.1 Health) ---
 
-function LiveHeader({
+const LiveHeader = memo(function LiveHeader({
   status,
-  spanCount,
   isHistorical,
   onTimePreset,
   onCustomRangeChange,
 }: {
   status: "connecting" | "connected" | "disconnected";
-  spanCount: number;
   isHistorical?: boolean;
   onTimePreset: (preset: TimeRangePreset) => void;
   onCustomRangeChange: (start: string, end: string) => void;
@@ -306,13 +310,18 @@ function LiveHeader({
   const toggleStatusGroup = useFilterStore((s) => s.toggleStatusGroup);
   const [searchExpanded, setSearchExpanded] = useState(false);
 
+  const spans = useLiveStreamStore((s) => s.spans);
+  const spanCount = useMemo(
+    () => spans.filter((s) => matchesFilters(s, filters)).length,
+    [spans, filters]
+  );
+
   // Custom range with only one bound picked — historical mode won't activate yet (AC5)
   const isCustomRangeIncomplete =
     filters.timeRange.preset === "custom" &&
     !!filters.timeRange.start !== !!filters.timeRange.end;
 
   // Real-time metrics from live span stream (instant reactivity)
-  const spans = useLiveStreamStore((s) => s.spans);
   const childrenMap = useLiveStreamStore((s) => s.childrenMap);
 
   // State-based current time for pure useMemo computation
@@ -576,6 +585,19 @@ function LiveHeader({
       </span>
     </div>
   );
+});
+
+/** Syncs available environment options from the live span buffer. */
+function EnvironmentSync() {
+  const spans = useLiveStreamStore((s) => s.spans);
+  const setAvailableEnvironments = useFilterStore((s) => s.setAvailableEnvironments);
+
+  useEffect(() => {
+    const envs = [...new Set(spans.map((s) => s.environment).filter(Boolean))].sort();
+    setAvailableEnvironments(envs.length > 0 ? envs : ["unknown"]);
+  }, [spans, setAvailableEnvironments]);
+
+  return null;
 }
 
 // --- Main Pulse View Page ---
@@ -648,34 +670,16 @@ function LivePageInner({
     };
   }, [projectId, orgSlug, projectSlug]);
 
-  const spans = useLiveStreamStore((s) => s.spans);
-  const childrenMap = useLiveStreamStore((s) => s.childrenMap);
-  const expandedSpanIds = useLiveStreamStore((s) => s.expandedSpanIds);
-  const isAtBottom = useLiveStreamStore((s) => s.isAtBottom);
-  const isLoadingHistory = useLiveStreamStore((s) => s.isLoadingHistory);
-  const hasMoreHistory = useLiveStreamStore((s) => s.hasMoreHistory);
   const addSpan = useLiveStreamStore((s) => s.addSpan);
   const prependSpans = useLiveStreamStore((s) => s.prependSpans);
-  const toggleExpanded = useLiveStreamStore((s) => s.toggleExpanded);
-  const setIsAtBottom = useLiveStreamStore((s) => s.setIsAtBottom);
   const setLoadingHistory = useLiveStreamStore((s) => s.setLoadingHistory);
   const setHasMoreHistory = useLiveStreamStore((s) => s.setHasMoreHistory);
+  const hasMoreHistory = useLiveStreamStore((s) => s.hasMoreHistory);
   const reset = useLiveStreamStore((s) => s.reset);
 
   // --- Filter state (Story 3.5, 11.2) ---
   const filters = useFilterStore((s) => s.filters);
   const setTimeRange = useFilterStore((s) => s.setTimeRange);
-
-  // Extract unique environments from span buffer (Task 5) and sync to store
-  const setAvailableEnvironments = useFilterStore((s) => s.setAvailableEnvironments);
-  const environments = useMemo(() => {
-    const envs = [...new Set(spans.map((s) => s.environment).filter(Boolean))].sort();
-    return envs.length > 0 ? envs : ["unknown"];
-  }, [spans]);
-
-  useEffect(() => {
-    setAvailableEnvironments(environments);
-  }, [environments, setAvailableEnvironments]);
 
   // Timeframe handling (migrated from FilterBar)
   const handleTimePreset = useCallback(
@@ -695,42 +699,6 @@ function LivePageInner({
     },
     [setTimeRange]
   );
-
-  // Filter root spans only (children inherit parent visibility)
-  const filteredRootSpans = useMemo(
-    () => spans.filter((s) => matchesFilters(s, filters)),
-    [spans, filters]
-  );
-
-  // Build flat display list: root spans + expanded children
-  const expandedSet = useMemo(() => new Set(expandedSpanIds), [expandedSpanIds]);
-
-  const displayList: DisplayItem[] = useMemo(() => {
-    const items: DisplayItem[] = [];
-    for (const root of filteredRootSpans) {
-      const children = childrenMap[root.span_id] ?? [];
-      // Total count = the request itself + its children
-      const totalCount = 1 + children.length;
-      const hasErrorChildren = children.some((c) => c.http_status_code >= 400);
-      const isExpanded = expandedSet.has(root.span_id);
-
-      items.push({ type: "root", span: root, childCount: totalCount, hasErrorChildren, isExpanded });
-
-      if (isExpanded) {
-        // First child row = the parent request itself
-        const allRows = [root, ...children];
-        for (let i = 0; i < allRows.length; i++) {
-          const span = allRows[i];
-          const subChildren = childrenMap[span.span_id] ?? [];
-          items.push({ type: "child", span, depth: 1, childCount: subChildren.length, isLast: i === allRows.length - 1 });
-        }
-      }
-    }
-    return items;
-  }, [filteredRootSpans, childrenMap, expandedSet]);
-
-  // Backward-compatible alias used by existing code (auto-scroll, counts, empty state)
-  const filteredSpans = filteredRootSpans;
 
   // Historical mode: custom time range with both start and end set (AC5)
   const isHistoricalMode =
@@ -808,26 +776,11 @@ function LivePageInner({
     }
   }, [orgSlug, projectSlug, filterReset]);
 
-  // --- Selection & Inspector state (Story 3.3 + 3.6) ---
-  // highlightedKey: keyboard/click highlight (J/K navigation, AC2), keyed by `${type}-${span_id}`
-  // because an expanded root's span_id is duplicated as its own first "child" row —
-  // a plain span_id key can't tell those two rows apart and navigation would stall on them.
-  // inspectorSpanId: which span has its inspector open (Enter to open, Escape to close)
-  const itemKey = useCallback((item: DisplayItem) => `${item.type}-${item.span.span_id}`, []);
-  const [highlightedKey, setHighlightedKey] = useState<string | null>(null);
+  // --- Inspector state (Story 3.3) ---
   const [inspectorSpanId, setInspectorSpanId] = useState<string | null>(null);
   const inspectorOpen = inspectorSpanId !== null;
   const { detail: spanDetail, loading: detailLoading, error: detailError } =
     useSpanDetail(orgSlug, projectSlug, inspectorSpanId);
-
-  // The "active" row for highlighting is either the keyboard/click highlight or,
-  // if none is set yet, whichever row matches the open inspector's span.
-  const activeKey = useMemo(() => {
-    if (highlightedKey) return highlightedKey;
-    if (!inspectorSpanId) return null;
-    const match = displayList.find((item) => item.span.span_id === inspectorSpanId);
-    return match ? itemKey(match) : null;
-  }, [highlightedKey, inspectorSpanId, displayList, itemKey]);
 
   // --- Resizable inspector panel ---
   const [inspectorWidth, setInspectorWidth] = useState(40); // default 40%
@@ -863,58 +816,15 @@ function LivePageInner({
     document.body.style.userSelect = "none";
   }
 
-  // Ref for returning focus to the stream list (AC4, UX3)
   const listContainerRef = useRef<HTMLDivElement>(null);
 
-  // Click handler: highlight + open inspector (preserves existing behavior)
-  const handleRowClick = useCallback((item: DisplayItem) => {
-    setHighlightedKey(itemKey(item));
-    setInspectorSpanId(item.span.span_id);
-  }, [itemKey]);
+  const handleOpenInspector = useCallback((spanId: string) => {
+    setInspectorSpanId(spanId);
+  }, []);
 
-  // --- Keyboard Navigation (Story 3.6, AC2/AC3/AC4, UX3) ---
-  // Walks the full displayList (root rows + expanded children) so j/k can
-  // reach child spans once a trace is expanded, not just root rows.
-
-  // Compute selected index from the highlighted row for keyboard navigation
-  const selectedDisplayIndex = useMemo(() => {
-    if (!highlightedKey) return -1;
-    return displayList.findIndex((item) => itemKey(item) === highlightedKey);
-  }, [highlightedKey, displayList, itemKey]);
-
-  // J / ArrowDown — move selection down (AC2)
-  const moveDown = useCallback(() => {
-    if (displayList.length === 0) return;
-    const nextIndex = selectedDisplayIndex === -1 ? 0 : Math.min(selectedDisplayIndex + 1, displayList.length - 1);
-    setHighlightedKey(itemKey(displayList[nextIndex]));
-  }, [displayList, selectedDisplayIndex, itemKey]);
-
-  // K / ArrowUp — move selection up (AC2)
-  const moveUp = useCallback(() => {
-    if (displayList.length === 0) return;
-    const nextIndex = selectedDisplayIndex === -1 ? displayList.length - 1 : Math.max(selectedDisplayIndex - 1, 0);
-    setHighlightedKey(itemKey(displayList[nextIndex]));
-  }, [displayList, selectedDisplayIndex, itemKey]);
-
-  useKeyboardShortcut("j", moveDown);
-  useKeyboardShortcut("ArrowDown", moveDown);
-  useKeyboardShortcut("k", moveUp);
-  useKeyboardShortcut("ArrowUp", moveUp);
-
-  // Enter — open inspector for highlighted span (AC3)
-  useKeyboardShortcut("Enter", useCallback(() => {
-    if (selectedDisplayIndex >= 0) {
-      setInspectorSpanId(displayList[selectedDisplayIndex].span.span_id);
-    }
-  }, [selectedDisplayIndex, displayList]));
-
-  // Escape — close inspector and return focus to list (AC4, UX3)
-  useKeyboardShortcut("Escape", useCallback(() => {
-    if (inspectorOpen) {
-      setInspectorSpanId(null);
-      listContainerRef.current?.focus();
-    }
-  }, [inspectorOpen]), { allowInInputs: true });
+  const handleCloseInspector = useCallback(() => {
+    setInspectorSpanId(null);
+  }, []);
 
   // Bootstrap store from server-prefetched spans (or re-bootstrap on project change)
   const initialSpansKey = useMemo(
@@ -1163,257 +1073,52 @@ function LivePageInner({
     prevRangeRef.current = rangeKey;
   }, [isHistoricalMode, projectId, orgSlug, projectSlug, filters.timeRange.start, filters.timeRange.end, reset, prependSpans, setLoadingHistory, setHasMoreHistory, buildFilterParams]);
 
-  // --- TanStack Virtual ---
-  const parentRef = useRef<HTMLDivElement>(null);
-  const prevCountRef = useRef(0);
-
-  const virtualizer = useVirtualizer({
-    count: displayList.length,
-    getScrollElement: () => parentRef.current,
-    estimateSize: () => ROW_HEIGHT,
-    overscan: 20,
-  });
-
-  // Adjust scroll position after history prepend to prevent jumping (AC1)
-  useLayoutEffect(() => {
-    if (scrollAdjustRef.current > 0 && parentRef.current) {
-      parentRef.current.scrollTop += scrollAdjustRef.current;
-      scrollAdjustRef.current = 0;
-    }
-  });
-
-  // Track scroll position to detect "at bottom" and "near top" for history loading
-  useEffect(() => {
-    const el = parentRef.current;
-    if (!el) return;
-
-    function handleScroll() {
-      if (!el) return;
-      const threshold = 50;
-      // When everything already fits in the viewport there's nothing to
-      // scroll into, so "near top" and "near bottom" would otherwise both
-      // read true for the same scroll position — treat it as bottom (nothing
-      // more to tail into) and skip the history fetch entirely.
-      const hasScrollableContent = el.scrollHeight > el.clientHeight;
-      const atBottom =
-        !hasScrollableContent ||
-        el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
-      setIsAtBottom(atBottom);
-
-      // Trigger history loading when scrolled near top (AC1)
-      if (hasScrollableContent && el.scrollTop < 100) {
-        loadHistory();
-      }
-    }
-
-    el.addEventListener("scroll", handleScroll, { passive: true });
-    return () => el.removeEventListener("scroll", handleScroll);
-  }, [setIsAtBottom, loadHistory]);
-
-  // Auto-scroll when at bottom and new spans arrive (AC2) — but never because
-  // of a history load (older spans prepended at the top from scrolling up).
-  useEffect(() => {
-    const grew = displayList.length > 0 && displayList.length > prevCountRef.current;
-    if (isAtBottom && grew && !isHistoryPrependRef.current) {
-      virtualizer.scrollToIndex(displayList.length - 1, { align: "end" });
-    }
-    isHistoryPrependRef.current = false;
-    prevCountRef.current = displayList.length;
-  }, [displayList.length, isAtBottom, virtualizer]);
-
-  // Auto-scroll selected row into view when keyboard-navigating (AC2, Story 3.6)
-  // selectedDisplayIndex (computed above, in the keyboard nav section) already
-  // covers both root and child rows.
-  useEffect(() => {
-    if (selectedDisplayIndex >= 0) {
-      virtualizer.scrollToIndex(selectedDisplayIndex, { align: "auto" });
-    }
-  }, [selectedDisplayIndex, virtualizer]);
-
-  // Back to Live handler (AC3)
-  function handleBackToLive() {
-    virtualizer.scrollToIndex(displayList.length - 1, { align: "end" });
-    setIsAtBottom(true);
-  }
-
-  // Determine what to show
-  // In historical mode, a zero-span result means "nothing in this range" —
-  // never the SDK onboarding flow, which only applies when no data has ever
-  // been sent at all.
-  const showSkeleton =
-    !projectId ||
-    !initialLoadDone ||
-    (isHistoricalMode && isLoadingHistory && spans.length === 0);
-  const showEmpty = initialLoadDone && spans.length === 0 && !isHistoricalMode;
-  const showHistoricalEmpty =
-    initialLoadDone && spans.length === 0 && isHistoricalMode && !isLoadingHistory;
-  const showList = initialLoadDone && spans.length > 0;
-  const showNoResults = showList && filteredSpans.length === 0;
+  const emptyState = useMemo(
+    () => <EmptyState orgSlug={orgSlug} projectSlug={projectSlug} />,
+    [orgSlug, projectSlug]
+  );
 
   return (
     <div className="flex flex-col" style={{ height: "calc(100vh - 48px)" }}>
+      <EnvironmentSync />
       {/* Screen reader live region for new span announcements (AC6, UX11) */}
       <div className="sr-only" aria-live="polite" aria-atomic="true">
         {liveAnnouncement}
       </div>
       <LiveHeader
         status={status}
-        spanCount={filteredSpans.length}
         isHistorical={isHistoricalMode}
         onTimePreset={handleTimePreset}
         onCustomRangeChange={handleCustomRangeChange}
       />
       <TimelineBar />
       <div ref={containerRef} className="relative flex flex-1 overflow-hidden">
-        {/* Stream list — compresses when inspector is open */}
         <div
-          className={cn(
-            inspectorOpen ? "hidden md:block" : "w-full"
-          )}
+          className={cn(inspectorOpen ? "hidden md:block" : "w-full")}
           style={{
             width: inspectorOpen ? `${100 - inspectorWidth}%` : "100%",
-            transition: "width 0.25s cubic-bezier(0.25, 0.1, 0.25, 1)"
+            transition: "width 0.25s cubic-bezier(0.25, 0.1, 0.25, 1)",
           }}
         >
-          <div className="relative h-full">
-            <div
-              ref={(el) => {
-                (parentRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
-                (listContainerRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
-              }}
-              tabIndex={-1}
-              role="list"
-              aria-label="Request stream"
-              className="h-full overflow-auto outline-none"
-            >
-              {showSkeleton && <PulseSkeleton />}
-              {showEmpty && <EmptyState orgSlug={orgSlug} projectSlug={projectSlug} />}
-              {showHistoricalEmpty && (
-                <div className="flex h-full items-center justify-center">
-                  <div className="text-center">
-                    <p className="text-sm font-medium text-muted-foreground">No requests in this time range</p>
-                    <p className="mt-1 text-xs text-muted-foreground/70">Try a different date range or check your filters</p>
-                  </div>
-                </div>
-              )}
-              {showNoResults && (
-                <div className="flex h-full items-center justify-center">
-                  <div className="text-center">
-                    <p className="text-sm font-medium text-muted-foreground">No matching requests</p>
-                    <p className="mt-1 text-xs text-muted-foreground/70">Try adjusting your filters</p>
-                  </div>
-                </div>
-              )}
-              {showList && !showNoResults && (
-                <div
-                  style={{
-                    height: `${virtualizer.getTotalSize()}px`,
-                    width: "100%",
-                    position: "relative",
-                  }}
-                >
-                  {/* History loading skeleton at top (AC1, UX7) */}
-                  {isLoadingHistory && (
-                    <div className="absolute left-0 top-0 z-10 w-full">
-                      {[0, 1, 2].map((i) => (
-                        <div
-                          key={i}
-                          className="flex items-center gap-3 border-b border-border/50 bg-background px-4 py-2"
-                        >
-                          <div className="h-5 w-14 animate-pulse rounded bg-muted" />
-                          <div
-                            className="h-4 animate-pulse rounded bg-muted"
-                            style={{ width: `${SKELETON_WIDTHS[i]}%` }}
-                          />
-                          <div className="ml-auto h-4 w-10 animate-pulse rounded bg-muted" />
-                          <div className="h-4 w-14 animate-pulse rounded bg-muted" />
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {virtualizer.getVirtualItems().map((virtualRow) => {
-                    const item = displayList[virtualRow.index];
-                    const isNew =
-                      virtualRow.index >= prevCountRef.current - 1 &&
-                      virtualRow.index === displayList.length - 1;
-
-                    const rowContent =
-                      item.type === "root" ? (
-                        <StreamRow
-                          span={item.span}
-                          isSelected={itemKey(item) === activeKey}
-                          childCount={item.childCount}
-                          hasErrorChildren={item.hasErrorChildren}
-                          isExpanded={item.isExpanded}
-                          onToggleExpand={() => toggleExpanded(item.span.span_id)}
-                          onClick={() => handleRowClick(item)}
-                        />
-                      ) : (
-                        <ChildSpanRow
-                          span={item.span}
-                          depth={item.depth}
-                          childCount={item.childCount}
-                          isLast={item.isLast}
-                          isSelected={itemKey(item) === activeKey}
-                          onClick={() => handleRowClick(item)}
-                        />
-                      );
-
-                    return (
-                      <div
-                        key={itemKey(item)}
-                        style={{
-                          position: "absolute",
-                          top: 0,
-                          left: 0,
-                          width: "100%",
-                          height: `${virtualRow.size}px`,
-                          transform: `translateY(${virtualRow.start}px)`,
-                        }}
-                      >
-                        {isNew ? (
-                          <motion.div
-                            initial={{ opacity: 0, y: 20 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ duration: 0.2, ease: "easeOut" }}
-                          >
-                            {rowContent}
-                          </motion.div>
-                        ) : (
-                          rowContent
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            {/* Back to Live floating button (AC2, AC3, UX17) */}
-            <AnimatePresence>
-              {!isAtBottom && filteredSpans.length > 0 && (
-                <motion.button
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: 10 }}
-                  transition={{ duration: 0.15 }}
-                  onClick={handleBackToLive}
-                  className="absolute bottom-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-lg hover:bg-primary/90 transition-colors"
-                >
-                  <ArrowDown className="size-4" />
-                  Back to Live
-                </motion.button>
-              )}
-            </AnimatePresence>
-          </div>
+          <StreamList
+            projectId={projectId}
+            initialLoadDone={initialLoadDone}
+            isHistoricalMode={isHistoricalMode}
+            inspectorSpanId={inspectorSpanId}
+            onOpenInspector={handleOpenInspector}
+            onCloseInspector={handleCloseInspector}
+            listContainerRef={listContainerRef}
+            scrollAdjustRef={scrollAdjustRef}
+            isHistoryPrependRef={isHistoryPrependRef}
+            onLoadHistory={loadHistory}
+            emptyState={emptyState}
+          />
         </div>
 
         {/* Resize handle + Span Inspector panel */}
         <AnimatePresence>
           {inspectorOpen && (
             <>
-              {/* Drag handle */}
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
@@ -1436,7 +1141,7 @@ function LivePageInner({
                   detail={spanDetail}
                   loading={detailLoading}
                   error={detailError}
-                  onClose={() => setInspectorSpanId(null)}
+                  onClose={handleCloseInspector}
                   orgSlug={orgSlug}
                   projectSlug={projectSlug}
                 />
