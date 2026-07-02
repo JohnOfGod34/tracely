@@ -922,11 +922,18 @@ function LivePageInner({
         `/api/orgs/${orgSlug}/projects/${projectSlug}/spans?limit=150` +
         (oldest ? `&before=${encodeURIComponent(oldest)}` : "");
 
-      // In historical mode, bound the query to the custom range and apply server-side filters
-      if (isHistoricalMode) {
-        if (filters.timeRange.start) url += `&after=${encodeURIComponent(filters.timeRange.start)}`;
-        url += buildFilterParams();
-      }
+      // Bound the query to the active window — custom range uses its fixed
+      // start, presets use a sliding "now - preset" bound recomputed on every
+      // call (same treatment matchesFilters already gives presets). Without
+      // this, scrolling up in preset mode pulled in spans from arbitrarily
+      // far in the past and hasMoreHistory only went false once the entire
+      // project history was exhausted, not the selected window.
+      const activeAfter =
+        filters.timeRange.preset === "custom"
+          ? filters.timeRange.start
+          : new Date(Date.now() - presetToMs(filters.timeRange.preset)).toISOString();
+      if (activeAfter) url += `&after=${encodeURIComponent(activeAfter)}`;
+      url += buildFilterParams();
 
       const res = await apiFetch<DataEnvelope<SpanEvent[]>>(url);
       const fetched = res.data;
@@ -955,7 +962,7 @@ function LivePageInner({
       setLoadingHistory(false);
       fetchingRef.current = false;
     }
-  }, [projectId, hasMoreHistory, orgSlug, projectSlug, prependSpans, setLoadingHistory, setHasMoreHistory, isHistoricalMode, filters.timeRange.start, buildFilterParams]);
+  }, [projectId, hasMoreHistory, orgSlug, projectSlug, prependSpans, setLoadingHistory, setHasMoreHistory, filters.timeRange.preset, filters.timeRange.start, buildFilterParams]);
 
   // Debounce endpointSearch before it triggers a server-side historical
   // refetch — matchesFilters still applies the raw value instantly to the
@@ -1062,6 +1069,10 @@ function LivePageInner({
   useEffect(() => {
     const preset = filters.timeRange.preset;
     if (preset !== "custom" && preset !== prevPresetRef.current && projectId) {
+      // Re-enable scrolling in case a previous preset had already exhausted
+      // its window (hasMoreHistory === false) — the newly selected preset
+      // has its own window to explore.
+      setHasMoreHistory(true);
       const after = new Date(Date.now() - presetToMs(preset)).toISOString();
       const url =
         `/api/orgs/${orgSlug}/projects/${projectSlug}/spans?limit=150` +

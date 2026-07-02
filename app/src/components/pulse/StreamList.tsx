@@ -202,30 +202,30 @@ function StreamListInner({
     }
   });
 
+  const checkScrollPosition = useCallback(() => {
+    const el = parentRef.current;
+    if (!el) return;
+    const threshold = 50;
+    const hasScrollableContent = el.scrollHeight > el.clientHeight;
+    const atBottom =
+      !hasScrollableContent ||
+      el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+    setIsAtBottom(atBottom);
+
+    // Predictive: trigger while there's still ~1 viewport of content above,
+    // instead of waiting until the user has visually reached the top —
+    // by the time they get there, the next page is already loaded.
+    if (hasScrollableContent && el.scrollTop < el.clientHeight) {
+      onLoadHistory();
+    }
+  }, [setIsAtBottom, onLoadHistory]);
+
   useEffect(() => {
     const el = parentRef.current;
     if (!el) return;
-
-    function handleScroll() {
-      if (!el) return;
-      const threshold = 50;
-      const hasScrollableContent = el.scrollHeight > el.clientHeight;
-      const atBottom =
-        !hasScrollableContent ||
-        el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
-      setIsAtBottom(atBottom);
-
-      // Predictive: trigger while there's still ~1 viewport of content above,
-      // instead of waiting until the user has visually reached the top —
-      // by the time they get there, the next page is already loaded.
-      if (hasScrollableContent && el.scrollTop < el.clientHeight) {
-        onLoadHistory();
-      }
-    }
-
-    el.addEventListener("scroll", handleScroll, { passive: true });
-    return () => el.removeEventListener("scroll", handleScroll);
-  }, [setIsAtBottom, onLoadHistory]);
+    el.addEventListener("scroll", checkScrollPosition, { passive: true });
+    return () => el.removeEventListener("scroll", checkScrollPosition);
+  }, [checkScrollPosition]);
 
   useEffect(() => {
     const grew = displayList.length > 0 && displayList.length > prevCountRef.current;
@@ -235,6 +235,17 @@ function StreamListInner({
     isHistoryPrependRef.current = false;
     prevCountRef.current = displayList.length;
   }, [displayList.length, isAtBottom, virtualizer, isHistoryPrependRef]);
+
+  // Re-evaluate scroll position after content changes (mount, preset
+  // backfill, live growth), not just on a native scroll event — otherwise
+  // the first scroll-up gesture after a content change can be missed and
+  // nothing loads until the user scrolls down and back up. Deferred one
+  // frame so it runs after the auto-scroll-to-bottom effect above (declared
+  // first, so it commits first) has applied its own scroll change.
+  useEffect(() => {
+    const raf = requestAnimationFrame(checkScrollPosition);
+    return () => cancelAnimationFrame(raf);
+  }, [displayList.length, checkScrollPosition]);
 
   useEffect(() => {
     if (selectedDisplayIndex >= 0) {
