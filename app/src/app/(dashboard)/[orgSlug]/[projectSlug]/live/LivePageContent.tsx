@@ -1013,9 +1013,17 @@ function LivePageInner() {
 
   // --- Historical mode: initial fetch on entry (AC5) ---
   const prevHistoricalRef = useRef(false);
+  const prevRangeRef = useRef<string | null>(null);
   useEffect(() => {
-    if (isHistoricalMode && !prevHistoricalRef.current && projectId) {
-      // Entering historical mode — reset store and fetch first page
+    const rangeKey = isHistoricalMode
+      ? `${filters.timeRange.start ?? ""}|${filters.timeRange.end ?? ""}`
+      : null;
+    const enteringHistorical = isHistoricalMode && !prevHistoricalRef.current;
+    const rangeChanged =
+      isHistoricalMode && prevHistoricalRef.current && rangeKey !== prevRangeRef.current;
+
+    if (isHistoricalMode && (enteringHistorical || rangeChanged) && projectId) {
+      // Entering historical mode, or the custom range changed — reset store and fetch first page
       reset();
       setHasMoreHistory(true);
 
@@ -1065,6 +1073,7 @@ function LivePageInner() {
       setInitialLoadDone(false);
     }
     prevHistoricalRef.current = isHistoricalMode;
+    prevRangeRef.current = rangeKey;
   }, [isHistoricalMode, projectId, orgSlug, projectSlug, filters.timeRange.start, filters.timeRange.end, reset, prependSpans, setLoadingHistory, setHasMoreHistory, buildFilterParams]);
 
   // --- TanStack Virtual ---
