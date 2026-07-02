@@ -1,7 +1,7 @@
 "use client";
 
 import { Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useParams, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { motion, AnimatePresence } from "framer-motion";
 import { Wifi, WifiOff, ArrowDown, Check, Copy, Terminal, Code, BookOpen, RefreshCw, Clock, Search, ChevronDown, AlertTriangle, X } from "lucide-react";
@@ -25,12 +25,12 @@ type DisplayItem =
   | { type: "root"; span: SpanEvent; childCount: number; hasErrorChildren: boolean; isExpanded: boolean }
   | { type: "child"; span: SpanEvent; depth: number; childCount: number; isLast: boolean };
 
-interface ProjectInfo {
-  id: string;
-  name: string;
-  slug: string;
-  org_id: string;
-  created_at: string;
+export interface LivePageClientProps {
+  orgSlug: string;
+  projectSlug: string;
+  projectId: string;
+  initialSpans: SpanEvent[];
+  initialHasMoreHistory: boolean;
 }
 
 interface ApiKeyItem {
@@ -571,7 +571,13 @@ function LiveHeader({
 
 // --- Main Pulse View Page ---
 
-export default function LivePageClient() {
+export default function LivePageClient({
+  orgSlug,
+  projectSlug,
+  projectId,
+  initialSpans,
+  initialHasMoreHistory,
+}: LivePageClientProps) {
   return (
     <Suspense
       fallback={
@@ -584,18 +590,24 @@ export default function LivePageClient() {
         </div>
       }
     >
-      <LivePageInner />
+      <LivePageInner
+        orgSlug={orgSlug}
+        projectSlug={projectSlug}
+        projectId={projectId}
+        initialSpans={initialSpans}
+        initialHasMoreHistory={initialHasMoreHistory}
+      />
     </Suspense>
   );
 }
 
-function LivePageInner() {
-  const params = useParams<{ orgSlug: string; projectSlug: string }>();
-  const { orgSlug, projectSlug } = params;
-
-  const [projectId, setProjectId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [initialLoadDone, setInitialLoadDone] = useState(false);
+function LivePageInner({
+  orgSlug,
+  projectSlug,
+  projectId,
+  initialSpans,
+  initialHasMoreHistory,
+}: LivePageClientProps) {
 
   const spans = useLiveStreamStore((s) => s.spans);
   const childrenMap = useLiveStreamStore((s) => s.childrenMap);
@@ -610,6 +622,8 @@ function LivePageInner() {
   const setLoadingHistory = useLiveStreamStore((s) => s.setLoadingHistory);
   const setHasMoreHistory = useLiveStreamStore((s) => s.setHasMoreHistory);
   const reset = useLiveStreamStore((s) => s.reset);
+  const [initialLoadDone, setInitialLoadDone] = useState(false);
+  const bootstrapKeyRef = useRef<string | null>(null);
 
   // --- Filter state (Story 3.5, 11.2) ---
   const filters = useFilterStore((s) => s.filters);
@@ -863,65 +877,30 @@ function LivePageInner() {
     }
   }, [inspectorOpen]), { allowInInputs: true });
 
-  // Fetch project UUID for SSE endpoint
-  useEffect(() => {
-    let cancelled = false;
-    async function loadProject() {
-      try {
-        const res = await apiFetch<DataEnvelope<ProjectInfo>>(
-          `/api/orgs/${orgSlug}/projects/${projectSlug}`
-        );
-        if (!cancelled) setProjectId(res.data.id);
-      } catch {
-        // Non-blocking — SSE won't connect without project ID
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
-    loadProject();
-    return () => {
-      cancelled = true;
-    };
-  }, [orgSlug, projectSlug]);
+  // Bootstrap store from server-prefetched spans (or re-bootstrap on project change)
+  useLayoutEffect(() => {
+    const key = `${orgSlug}/${projectSlug}/${projectId}`;
+    if (bootstrapKeyRef.current === key) return;
+    bootstrapKeyRef.current = key;
 
-  // Reset store on unmount
-  useEffect(() => {
+    reset();
+    if (initialSpans.length > 0) {
+      prependSpans(initialSpans);
+    }
+    setHasMoreHistory(initialHasMoreHistory);
+    setInitialLoadDone(true);
+
     return () => reset();
-  }, [reset]);
-
-  // Load recent spans on initial page load so the list isn't empty
-  useEffect(() => {
-    if (!projectId || initialLoadDone || isHistoricalMode) return;
-
-    let cancelled = false;
-    async function loadInitial() {
-      try {
-        const url = `/api/orgs/${orgSlug}/projects/${projectSlug}/spans?limit=50`;
-        const res = await apiFetch<DataEnvelope<SpanEvent[]>>(url);
-        if (cancelled) return;
-        const fetched = res.data;
-
-        if (fetched.length > 0) {
-          const chronological = [...fetched].reverse();
-          prependSpans(chronological);
-
-          const meta = res.meta as { has_more?: boolean };
-          if (!meta.has_more) {
-            setHasMoreHistory(false);
-          }
-        } else {
-          setHasMoreHistory(false);
-        }
-      } catch {
-        // Non-blocking
-      } finally {
-        if (!cancelled) setInitialLoadDone(true);
-      }
-    }
-
-    loadInitial();
-    return () => { cancelled = true; };
-  }, [projectId, initialLoadDone, isHistoricalMode, orgSlug, projectSlug, prependSpans, setHasMoreHistory]);
+  }, [
+    orgSlug,
+    projectSlug,
+    projectId,
+    initialSpans,
+    initialHasMoreHistory,
+    reset,
+    prependSpans,
+    setHasMoreHistory,
+  ]);
 
   // Live stream announcement for screen readers (AC6, UX11)
   const [liveAnnouncement, setLiveAnnouncement] = useState("");
@@ -942,8 +921,8 @@ function LivePageInner() {
   );
 
   const { status } = useEventStream({
-    projectId: projectId ?? "",
-    enabled: projectId !== null && !isHistoricalMode,
+    projectId,
+    enabled: !isHistoricalMode,
     onSpan: handleSpan,
   });
 
@@ -992,11 +971,13 @@ function LivePageInner() {
       } else {
         // API returns newest-first; reverse for chronological prepend
         const chronological = [...fetched].reverse();
-        // Only root spans affect scroll position (children are collapsed by default)
-        const rootCount = chronological.filter((s) => !s.parent_span_id || s.parent_span_id === "").length;
-        scrollAdjustRef.current = rootCount * ROW_HEIGHT;
         isHistoryPrependRef.current = true;
-        prependSpans(chronological);
+        // Use the count of roots actually added (post-dedup) — the raw fetch
+        // count would overshoot the scroll compensation when the batch
+        // overlaps spans already in the store (e.g. a fast scroll racing the
+        // initial load), jumping the view forward instead of holding position.
+        const addedRootCount = prependSpans(chronological);
+        scrollAdjustRef.current = addedRootCount * ROW_HEIGHT;
 
         const meta = res.meta as { has_more?: boolean };
         if (!meta.has_more) {
@@ -1063,14 +1044,33 @@ function LivePageInner() {
 
       fetchInitialPage();
     } else if (!isHistoricalMode && prevHistoricalRef.current) {
-      // Leaving historical mode — reset store and re-run the recent-spans
-      // load (SSE reconnects on its own, but that only delivers *new* events;
-      // without re-fetching, the buffer stays empty until traffic happens to
-      // arrive, which looks identical to "no data ever sent" and wrongly
-      // shows the SDK onboarding screen).
+      // Leaving historical mode — reset store and re-fetch recent spans
+      // (SSE reconnects on its own, but that only delivers *new* events).
       reset();
       setHasMoreHistory(true);
       setInitialLoadDone(false);
+
+      async function fetchLiveSpans() {
+        try {
+          const url = `/api/orgs/${orgSlug}/projects/${projectSlug}/spans?limit=50`;
+          const res = await apiFetch<DataEnvelope<SpanEvent[]>>(url);
+          const fetched = res.data;
+
+          if (fetched.length > 0) {
+            prependSpans([...fetched].reverse());
+            const meta = res.meta as { has_more?: boolean };
+            setHasMoreHistory(meta.has_more !== false);
+          } else {
+            setHasMoreHistory(false);
+          }
+        } catch {
+          // Non-blocking
+        } finally {
+          setInitialLoadDone(true);
+        }
+      }
+
+      fetchLiveSpans();
     }
     prevHistoricalRef.current = isHistoricalMode;
     prevRangeRef.current = rangeKey;
@@ -1154,11 +1154,11 @@ function LivePageInner() {
   // never the SDK onboarding flow, which only applies when no data has ever
   // been sent at all.
   const showSkeleton =
-    loading || !initialLoadDone || (isHistoricalMode && isLoadingHistory && spans.length === 0);
-  const showEmpty = !loading && initialLoadDone && spans.length === 0 && !isHistoricalMode;
+    !initialLoadDone || (isHistoricalMode && isLoadingHistory && spans.length === 0);
+  const showEmpty = initialLoadDone && spans.length === 0 && !isHistoricalMode;
   const showHistoricalEmpty =
-    !loading && initialLoadDone && spans.length === 0 && isHistoricalMode && !isLoadingHistory;
-  const showList = !loading && initialLoadDone && spans.length > 0;
+    initialLoadDone && spans.length === 0 && isHistoricalMode && !isLoadingHistory;
+  const showList = initialLoadDone && spans.length > 0;
   const showNoResults = showList && filteredSpans.length === 0;
 
   return (
