@@ -1,5 +1,6 @@
 "use client";
 
+import type { MouseEvent } from "react";
 import { useRouter } from "next/navigation";
 import {
   ResponsiveContainer,
@@ -53,13 +54,11 @@ export function ErrorsTimelineWidget({
 
   const totalErrors = data.reduce((sum, d) => sum + d.value, 0);
 
-  const handleChartClick = (state: { activePayload?: Array<{ payload: ChartPoint }> }) => {
-    if (!drillDown || !state?.activePayload?.[0]?.payload) return;
-    const { timestamp, errors } = state.activePayload[0].payload;
-    if (errors <= 0) return;
+  const navigateToErrorBucket = (point: ChartPoint) => {
+    if (!drillDown || point.errors <= 0) return;
 
-    const start = timestamp;
-    const end = new Date(new Date(timestamp).getTime() + 60_000).toISOString();
+    const start = point.timestamp;
+    const end = new Date(new Date(point.timestamp).getTime() + 60_000).toISOString();
     router.push(
       buildLiveUrl(orgSlug!, projectSlug!, {
         timeRange: { preset: "custom", start, end },
@@ -67,6 +66,14 @@ export function ErrorsTimelineWidget({
         statusGroups: ["4xx", "5xx"],
       })
     );
+  };
+
+  const resolveClickedPoint = (
+    state: { activeTooltipIndex?: string | number | null; activeIndex?: string | number | null }
+  ): ChartPoint | null => {
+    const rawIndex = state.activeTooltipIndex ?? state.activeIndex;
+    if (rawIndex == null || rawIndex === "") return null;
+    return chartData[Number(rawIndex)] ?? null;
   };
 
   return (
@@ -88,7 +95,14 @@ export function ErrorsTimelineWidget({
           <AreaChart
             data={chartData}
             margin={{ top: 8, right: 8, left: -20, bottom: 0 }}
-            onClick={drillDown ? handleChartClick : undefined}
+            onClick={
+              drillDown
+                ? (state, _event: MouseEvent<SVGGraphicsElement>) => {
+                    const point = resolveClickedPoint(state);
+                    if (point) navigateToErrorBucket(point);
+                  }
+                : undefined
+            }
           >
             <CartesianGrid strokeDasharray="3 3" stroke={DASHBOARD_CHART.grid} vertical={false} />
             <XAxis
