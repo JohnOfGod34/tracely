@@ -1,6 +1,5 @@
 "use client";
 
-import type { MouseEvent } from "react";
 import { useRouter } from "next/navigation";
 import {
   ResponsiveContainer,
@@ -97,7 +96,7 @@ export function ErrorsTimelineWidget({
             margin={{ top: 8, right: 8, left: -20, bottom: 0 }}
             onClick={
               drillDown
-                ? (state, _event: MouseEvent<SVGGraphicsElement>) => {
+                ? (state) => {
                     const point = resolveClickedPoint(state);
                     if (point) navigateToErrorBucket(point);
                   }
