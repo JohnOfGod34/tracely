@@ -449,7 +449,7 @@ const LiveHeader = memo(function LiveHeader({
               : "border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground"
           )}
           data-testid="header-4xx-only"
-          title="Show only 4xx client errors"
+          title="Show 4xx errors from the full selected period"
         >
           4xx
         </button>
@@ -463,7 +463,7 @@ const LiveHeader = memo(function LiveHeader({
               : "border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground"
           )}
           data-testid="header-5xx-only"
-          title="Show only 5xx server errors"
+          title="Show 5xx errors from the full selected period"
         >
           5xx
         </button>
@@ -636,7 +636,14 @@ function LivePageInner({
   const setLoadingHistory = useLiveStreamStore((s) => s.setLoadingHistory);
   const setHasMoreHistory = useLiveStreamStore((s) => s.setHasMoreHistory);
   const hasMoreHistory = useLiveStreamStore((s) => s.hasMoreHistory);
+  const spanCount = useLiveStreamStore((s) => s.spans.length);
   const reset = useLiveStreamStore((s) => s.reset);
+
+  const projectHasDataRef = useRef(initialSpans.length > 0);
+  if (spanCount > 0) {
+    projectHasDataRef.current = true;
+  }
+  const projectHasData = projectHasDataRef.current;
 
   // --- Filter state (Story 3.5, 11.2) ---
   const filters = useFilterStore((s) => s.filters);
@@ -804,6 +811,7 @@ function LivePageInner({
 
     reset();
     if (initialSpans.length > 0) {
+      projectHasDataRef.current = true;
       prependSpans(initialSpans);
       setHasMoreHistory(initialHasMoreHistory);
       setInitialLoadDone(true);
@@ -838,6 +846,7 @@ function LivePageInner({
         reset();
         const fetched = res.data;
         if (fetched.length > 0) {
+          projectHasDataRef.current = true;
           prependSpans([...fetched].reverse());
           const meta = res.meta as { has_more?: boolean };
           setHasMoreHistory(meta.has_more !== false);
@@ -873,6 +882,7 @@ function LivePageInner({
   const handleSpan = useCallback(
     (data: Record<string, unknown>) => {
       const span = data as unknown as SpanEvent;
+      projectHasDataRef.current = true;
       addSpan(span);
       // Announce new span for screen readers
       if (span.span_type !== "pending_span") {
@@ -892,24 +902,109 @@ function LivePageInner({
 
   // --- History loading (AC1) ---
   const fetchingRef = useRef(false);
+  const pendingWindowFetchRef = useRef<{ replace: boolean } | null>(null);
   const scrollAdjustRef = useRef(0);
   // Set right before a history prepend, cleared after the next auto-scroll
   // check — prevents a history load (triggered by scrolling up) from ever
   // being mistaken for new live data and snapping the view back to the bottom.
   const isHistoryPrependRef = useRef(false);
 
-  /** Build filter query params for server-side filtering in historical mode. */
-  const buildFilterParams = useCallback(() => {
-    const params: string[] = [];
-    if (filters.environment) params.push(`environment=${encodeURIComponent(filters.environment)}`);
-    if (filters.statusGroups.length > 0) {
-      params.push(`status_groups=${encodeURIComponent(filters.statusGroups.join(","))}`);
+  // Debounce endpointSearch before server-side refetch — matchesFilters still
+  // applies the raw value instantly to the already-loaded buffer.
+  const [debouncedSearch, setDebouncedSearch] = useState(filters.endpointSearch);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(filters.endpointSearch), 400);
+    return () => clearTimeout(timer);
+  }, [filters.endpointSearch]);
+
+  /** Build filter query params for server-side filtering. */
+  const buildFilterParams = useCallback(
+    (endpointSearch = filters.endpointSearch) => {
+      const params: string[] = [];
+      if (filters.environment) {
+        params.push(`environment=${encodeURIComponent(filters.environment)}`);
+      }
+      if (filters.statusGroups.length > 0) {
+        params.push(`status_groups=${encodeURIComponent(filters.statusGroups.join(","))}`);
+      }
+      if (endpointSearch) {
+        params.push(`endpoint_search=${encodeURIComponent(endpointSearch)}`);
+      }
+      return params.length > 0 ? `&${params.join("&")}` : "";
+    },
+    [filters.environment, filters.statusGroups, filters.endpointSearch]
+  );
+
+  const getActiveWindowAfter = useCallback(() => {
+    if (filters.timeRange.preset === "custom" && filters.timeRange.start) {
+      return filters.timeRange.start;
     }
-    if (filters.endpointSearch) {
-      params.push(`endpoint_search=${encodeURIComponent(filters.endpointSearch)}`);
-    }
-    return params.length > 0 ? `&${params.join("&")}` : "";
-  }, [filters.environment, filters.statusGroups, filters.endpointSearch]);
+    return new Date(Date.now() - presetToMs(filters.timeRange.preset)).toISOString();
+  }, [filters.timeRange.preset, filters.timeRange.start]);
+
+  /** Fetch spans for the active time window (optionally replacing the buffer). */
+  const fetchActiveWindow = useCallback(
+    async ({ replace }: { replace: boolean }) => {
+      if (!projectId) return;
+      if (fetchingRef.current) {
+        pendingWindowFetchRef.current = { replace };
+        return;
+      }
+      fetchingRef.current = true;
+      setLoadingHistory(true);
+
+      try {
+        let url =
+          `/api/orgs/${orgSlug}/projects/${projectSlug}/spans?limit=150` +
+          `&after=${encodeURIComponent(getActiveWindowAfter())}`;
+
+        if (filters.timeRange.preset === "custom" && filters.timeRange.end) {
+          url += `&before=${encodeURIComponent(filters.timeRange.end)}`;
+        }
+        url += buildFilterParams(debouncedSearch);
+
+        if (replace) {
+          reset();
+          setHasMoreHistory(true);
+        }
+
+        const res = await apiFetch<DataEnvelope<SpanEvent[]>>(url);
+        const fetched = res.data;
+
+        if (fetched.length === 0) {
+          if (replace) setHasMoreHistory(false);
+        } else {
+          projectHasDataRef.current = true;
+          if (!replace) isHistoryPrependRef.current = true;
+          prependSpans([...fetched].reverse());
+          const meta = res.meta as { has_more?: boolean };
+          setHasMoreHistory(meta.has_more !== false);
+        }
+      } catch {
+        // Non-blocking — buffer stays as-is
+      } finally {
+        setLoadingHistory(false);
+        fetchingRef.current = false;
+        const pending = pendingWindowFetchRef.current;
+        if (pending) {
+          pendingWindowFetchRef.current = null;
+          void fetchActiveWindow(pending);
+        }
+      }
+    },
+    [
+      projectId,
+      orgSlug,
+      projectSlug,
+      getActiveWindowAfter,
+      buildFilterParams,
+      debouncedSearch,
+      reset,
+      prependSpans,
+      setHasMoreHistory,
+      setLoadingHistory,
+    ]
+  );
 
   const loadHistory = useCallback(async () => {
     if (fetchingRef.current || !projectId || !hasMoreHistory) return;
@@ -939,7 +1034,7 @@ function LivePageInner({
           ? filters.timeRange.start
           : new Date(Date.now() - presetToMs(filters.timeRange.preset)).toISOString();
       if (activeAfter) url += `&after=${encodeURIComponent(activeAfter)}`;
-      url += buildFilterParams();
+      url += buildFilterParams(debouncedSearch);
 
       const res = await apiFetch<DataEnvelope<SpanEvent[]>>(url);
       const fetched = res.data;
@@ -968,24 +1063,20 @@ function LivePageInner({
       setLoadingHistory(false);
       fetchingRef.current = false;
     }
-  }, [projectId, hasMoreHistory, orgSlug, projectSlug, prependSpans, setLoadingHistory, setHasMoreHistory, filters.timeRange.preset, filters.timeRange.start, buildFilterParams]);
-
-  // Debounce endpointSearch before it triggers a server-side historical
-  // refetch — matchesFilters still applies the raw value instantly to the
-  // already-loaded buffer, so typing feels responsive; only the network
-  // round trip (searching the whole selected range) waits for a pause.
-  const [debouncedSearch, setDebouncedSearch] = useState(filters.endpointSearch);
-  useEffect(() => {
-    const timer = setTimeout(() => setDebouncedSearch(filters.endpointSearch), 400);
-    return () => clearTimeout(timer);
-  }, [filters.endpointSearch]);
+  }, [projectId, hasMoreHistory, orgSlug, projectSlug, prependSpans, setLoadingHistory, setHasMoreHistory, filters.timeRange.preset, filters.timeRange.start, buildFilterParams, debouncedSearch]);
 
   // --- Historical mode: initial fetch on entry (AC5) ---
   const prevHistoricalRef = useRef(false);
   const prevRangeRef = useRef<string | null>(null);
   useEffect(() => {
     const rangeKey = isHistoricalMode
-      ? `${filters.timeRange.start ?? ""}|${filters.timeRange.end ?? ""}|${debouncedSearch}`
+      ? [
+          filters.timeRange.start ?? "",
+          filters.timeRange.end ?? "",
+          filters.statusGroups.join(","),
+          filters.environment ?? "",
+          debouncedSearch,
+        ].join("|")
       : null;
     const enteringHistorical = isHistoricalMode && !prevHistoricalRef.current;
     const rangeChanged =
@@ -1005,7 +1096,7 @@ function LivePageInner({
             `/api/orgs/${orgSlug}/projects/${projectSlug}/spans?limit=150` +
             `&after=${encodeURIComponent(filters.timeRange.start!)}` +
             `&before=${encodeURIComponent(filters.timeRange.end!)}` +
-            buildFilterParams();
+            buildFilterParams(debouncedSearch);
 
           const res = await apiFetch<DataEnvelope<SpanEvent[]>>(url);
           const fetched = res.data;
@@ -1062,48 +1153,69 @@ function LivePageInner({
     }
     prevHistoricalRef.current = isHistoricalMode;
     prevRangeRef.current = rangeKey;
-  }, [isHistoricalMode, projectId, orgSlug, projectSlug, filters.timeRange.start, filters.timeRange.end, debouncedSearch, reset, prependSpans, setLoadingHistory, setHasMoreHistory, buildFilterParams]);
+  }, [isHistoricalMode, projectId, orgSlug, projectSlug, filters.timeRange.start, filters.timeRange.end, filters.statusGroups, filters.environment, debouncedSearch, reset, prependSpans, setLoadingHistory, setHasMoreHistory, buildFilterParams]);
 
-  // --- Preset time ranges: backfill from the server (soft seed, not a mode switch) ---
-  // Presets (5m/15m/1h/6h/24h) previously only filtered whatever was already
-  // in the client buffer (initial load + live SSE trickle), so e.g. "24h"
-  // right after opening the page showed only the last couple minutes.
-  // Fetch the actual window from the server and merge it in — no reset(),
-  // the live stream keeps running untouched, and prependSpans dedups
-  // against whatever's already loaded.
-  const prevPresetRef = useRef<TimeRangePreset>(filters.timeRange.preset);
+  // Preset live mode: backfill or refetch the active window when the timeframe
+  // or server-side filters (4xx/5xx, env, search) change. Status filters only
+  // hid what was already in the client buffer — now we query ClickHouse for the
+  // full selected window with those filters applied.
+  const prevWindowFetchKeyRef = useRef<string | null>(null);
   useEffect(() => {
-    const preset = filters.timeRange.preset;
-    if (preset !== "custom" && preset !== prevPresetRef.current && projectId) {
-      // Re-enable scrolling in case a previous preset had already exhausted
-      // its window (hasMoreHistory === false) — the newly selected preset
-      // has its own window to explore.
-      setHasMoreHistory(true);
-      const after = new Date(Date.now() - presetToMs(preset)).toISOString();
-      const url =
-        `/api/orgs/${orgSlug}/projects/${projectSlug}/spans?limit=150` +
-        `&after=${encodeURIComponent(after)}` +
-        buildFilterParams();
+    if (!projectId || !initialLoadDone || isHistoricalMode) return;
 
-      apiFetch<DataEnvelope<SpanEvent[]>>(url)
-        .then((res) => {
-          if (res.data.length > 0) {
-            // Same guard loadHistory() uses: without it, this background
-            // merge can grow the list while the user is at/near the bottom
-            // and wrongly trigger the auto-scroll-to-bottom effect, snapping
-            // the view down instead of leaving the scroll position alone.
-            isHistoryPrependRef.current = true;
-            prependSpans([...res.data].reverse());
-            const meta = res.meta as { has_more?: boolean };
-            if (!meta.has_more) setHasMoreHistory(false);
-          }
-        })
-        .catch(() => {
-          // Non-blocking — the buffer just stays whatever it already had
-        });
+    const windowKey = [
+      filters.timeRange.preset,
+      filters.timeRange.start ?? "",
+      filters.timeRange.end ?? "",
+      filters.statusGroups.join(","),
+      filters.environment ?? "",
+      debouncedSearch,
+    ].join("|");
+
+    const hasServerFilters =
+      filters.statusGroups.length > 0 ||
+      filters.environment !== null ||
+      debouncedSearch !== "";
+
+    if (prevWindowFetchKeyRef.current === null) {
+      prevWindowFetchKeyRef.current = windowKey;
+      if (!hasServerFilters) return;
+    } else if (windowKey === prevWindowFetchKeyRef.current) {
+      return;
     }
-    prevPresetRef.current = preset;
-  }, [filters.timeRange.preset, projectId, orgSlug, projectSlug, prependSpans, setHasMoreHistory, buildFilterParams]);
+
+    const prevKey = prevWindowFetchKeyRef.current;
+    prevWindowFetchKeyRef.current = windowKey;
+
+    const [prevPreset, prevStart, prevEnd, prevStatus, prevEnv, prevSearch] =
+      prevKey.split("|");
+    const prevHadServerFilters = prevStatus !== "" || prevEnv !== "" || prevSearch !== "";
+    const onlyPresetChanged =
+      !hasServerFilters &&
+      !prevHadServerFilters &&
+      prevStatus === filters.statusGroups.join(",") &&
+      prevEnv === (filters.environment ?? "") &&
+      prevSearch === debouncedSearch &&
+      (prevPreset !== filters.timeRange.preset ||
+        prevStart !== (filters.timeRange.start ?? "") ||
+        prevEnd !== (filters.timeRange.end ?? ""));
+
+    const shouldReplace =
+      hasServerFilters || prevHadServerFilters || !onlyPresetChanged;
+
+    void fetchActiveWindow({ replace: shouldReplace });
+  }, [
+    filters.timeRange.preset,
+    filters.timeRange.start,
+    filters.timeRange.end,
+    filters.statusGroups,
+    filters.environment,
+    debouncedSearch,
+    projectId,
+    initialLoadDone,
+    isHistoricalMode,
+    fetchActiveWindow,
+  ]);
 
   const emptyState = useMemo(
     () => <EmptyState orgSlug={orgSlug} projectSlug={projectSlug} />,
@@ -1138,6 +1250,7 @@ function LivePageInner({
             projectId={projectId}
             initialLoadDone={initialLoadDone}
             isHistoricalMode={isHistoricalMode}
+            projectHasData={projectHasData}
             inspectorSpanId={inspectorSpanId}
             onOpenInspector={handleOpenInspector}
             onCloseInspector={handleCloseInspector}

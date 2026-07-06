@@ -14,6 +14,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowDown } from "lucide-react";
 import { matchesFilters } from "@/lib/filterUtils";
+import type { StreamFilters } from "@/types/span";
 import { useLiveStreamStore } from "@/stores/liveStreamStore";
 import { useFilterStore } from "@/stores/filterStore";
 import { useKeyboardShortcut } from "@/hooks/useKeyboardShortcut";
@@ -51,6 +52,8 @@ export interface StreamListProps {
   projectId: string | null;
   initialLoadDone: boolean;
   isHistoricalMode: boolean;
+  /** True once the project has ever had spans (SSR, fetch, or live stream). */
+  projectHasData: boolean;
   inspectorSpanId: string | null;
   onOpenInspector: (spanId: string) => void;
   onCloseInspector: () => void;
@@ -61,10 +64,19 @@ export interface StreamListProps {
   emptyState: ReactNode;
 }
 
+function hasServerSideFilters(filters: StreamFilters) {
+  return (
+    filters.statusGroups.length > 0 ||
+    filters.environment !== null ||
+    filters.endpointSearch !== ""
+  );
+}
+
 function StreamListInner({
   projectId,
   initialLoadDone,
   isHistoricalMode,
+  projectHasData,
   inspectorSpanId,
   onOpenInspector,
   onCloseInspector,
@@ -258,11 +270,32 @@ function StreamListInner({
     setIsAtBottom(true);
   }
 
+  const serverFiltersActive = hasServerSideFilters(filters);
+
   const showSkeleton =
     !projectId ||
     !initialLoadDone ||
-    (isHistoricalMode && isLoadingHistory && spans.length === 0);
-  const showEmpty = initialLoadDone && spans.length === 0 && !isHistoricalMode;
+    (isLoadingHistory && spans.length === 0);
+  const showOnboarding =
+    initialLoadDone &&
+    spans.length === 0 &&
+    !isHistoricalMode &&
+    !serverFiltersActive &&
+    !isLoadingHistory &&
+    !projectHasData;
+  const showFilteredEmpty =
+    initialLoadDone &&
+    spans.length === 0 &&
+    !isHistoricalMode &&
+    serverFiltersActive &&
+    !isLoadingHistory;
+  const showWindowEmpty =
+    initialLoadDone &&
+    spans.length === 0 &&
+    !isHistoricalMode &&
+    !serverFiltersActive &&
+    !isLoadingHistory &&
+    projectHasData;
   const showHistoricalEmpty =
     initialLoadDone && spans.length === 0 && isHistoricalMode && !isLoadingHistory;
   const showList = initialLoadDone && spans.length > 0;
@@ -281,7 +314,27 @@ function StreamListInner({
         className="h-full overflow-auto outline-none"
       >
         {showSkeleton && <PulseSkeleton />}
-        {showEmpty && emptyState}
+        {showOnboarding && emptyState}
+        {showFilteredEmpty && (
+          <div className="flex h-full items-center justify-center">
+            <div className="text-center">
+              <p className="text-sm font-medium text-muted-foreground">No matching requests</p>
+              <p className="mt-1 text-xs text-muted-foreground/70">
+                No spans match your filters in the selected time window
+              </p>
+            </div>
+          </div>
+        )}
+        {showWindowEmpty && (
+          <div className="flex h-full items-center justify-center">
+            <div className="text-center">
+              <p className="text-sm font-medium text-muted-foreground">No requests in this time range</p>
+              <p className="mt-1 text-xs text-muted-foreground/70">
+                Try a wider time window or wait for new traffic
+              </p>
+            </div>
+          </div>
+        )}
         {showHistoricalEmpty && (
           <div className="flex h-full items-center justify-center">
             <div className="text-center">
