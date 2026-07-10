@@ -578,7 +578,6 @@ function DashboardPageInner({
             trend={errorTrend}
             tier={errorRateTier(dashboardData.error_rate)}
             sparklineData={sparklines.errorRate}
-            sparklineVariant="negative"
             tone={errorTone}
             comparisonLabel={trendBaseline}
             description={DASHBOARD_METRIC_HELP.errorRate}
@@ -609,7 +608,6 @@ function DashboardPageInner({
             trend={successTrend}
             tier={successRateTier(successRateValue)}
             sparklineData={sparklines.successRate}
-            sparklineVariant="positive"
             comparisonLabel={trendBaseline}
             description={DASHBOARD_METRIC_HELP.successRate}
             className="col-span-6 lg:col-span-3"

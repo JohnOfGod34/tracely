@@ -37,11 +37,25 @@ const TONE_VALUE: Record<NonNullable<MetricSparklineCardProps["tone"]>, string> 
   critical: "text-destructive",
 };
 
-function trendSparklineVariant(trend: MetricTrend | null | undefined): SparklineVariant {
-  if (!trend || trend.direction === "neutral") return "neutral";
+function trendSparklineVariant(
+  trend: MetricTrend | null | undefined,
+  override?: SparklineVariant
+): SparklineVariant {
+  if (override) return override;
+  if (!trend || trend.neutralColor || trend.direction === "neutral") return "neutral";
   const good =
     trend.direction === "up" ? !trend.invertColors : trend.invertColors;
   return good ? "positive" : "negative";
+}
+
+function trendTextClass(trend: MetricTrend | null | undefined): string {
+  if (!trend || trend.neutralColor || trend.direction === "neutral") {
+    return "text-muted-foreground";
+  }
+  if (trend.direction === "up") {
+    return trend.invertColors ? "text-destructive" : "text-success";
+  }
+  return trend.invertColors ? "text-success" : "text-destructive";
 }
 
 function MetricSparklineCardInner({
@@ -56,18 +70,8 @@ function MetricSparklineCardInner({
   description,
   className,
 }: MetricSparklineCardProps) {
-  const variant = sparklineVariant ?? trendSparklineVariant(trend);
-
-  const trendClass =
-    trend?.direction === "neutral"
-      ? "text-muted-foreground"
-      : trend?.direction === "up"
-        ? trend.invertColors
-          ? "text-destructive"
-          : "text-success"
-        : trend?.invertColors
-          ? "text-success"
-          : "text-destructive";
+  const variant = trendSparklineVariant(trend, sparklineVariant);
+  const trendClass = trendTextClass(trend);
 
   return (
     <div

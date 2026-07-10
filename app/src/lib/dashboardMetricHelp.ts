@@ -1,7 +1,7 @@
 /** Plain-language explanations for dashboard metrics and widgets. */
 export const DASHBOARD_METRIC_HELP = {
   requests:
-    "Total HTTP requests in the selected window. Trend compares to the immediately preceding window of equal length.",
+    "Total HTTP requests in the selected window. Trend compares to the preceding window — volume alone is neither good nor bad.",
   errorRate:
     "Share of requests that returned 4xx/5xx or failed spans. Trend shows change in percentage points vs the previous window.",
   p95Latency:

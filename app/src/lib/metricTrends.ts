@@ -5,11 +5,15 @@ export interface MetricTrend {
   label: string;
   /** When true, an increase uses warning/danger styling (error rate, latency). */
   invertColors: boolean;
+  /** Volume-style metrics — show change without good/bad coloring. */
+  neutralColor?: boolean;
 }
 
 const NEUTRAL_THRESHOLD = {
   requests: 0.01,
   errorRate: 0.05,
+  /** Success/error rate deltas below this show as Stable (e.g. ±0.2 pts). */
+  ratePoints: 0.25,
   latency: 5,
 };
 
@@ -48,11 +52,13 @@ export function computeRequestTrend(
 ): MetricTrend | null {
   if (!isFiniteNumber(previous)) return null;
   const safeCurrent = isFiniteNumber(current) ? current : 0;
-  return formatPercentTrend(
+  const trend = formatPercentTrend(
     pctChange(safeCurrent, previous),
     false,
     NEUTRAL_THRESHOLD.requests
   );
+  if (!trend) return null;
+  return { ...trend, neutralColor: true };
 }
 
 export function computeErrorRateTrend(
@@ -62,7 +68,7 @@ export function computeErrorRateTrend(
   if (!isFiniteNumber(previous)) return null;
   const safeCurrent = isFiniteNumber(current) ? current : 0;
   const delta = safeCurrent - previous;
-  if (Math.abs(delta) < NEUTRAL_THRESHOLD.errorRate) return stableTrend(true);
+  if (Math.abs(delta) < NEUTRAL_THRESHOLD.ratePoints) return stableTrend(true);
   const sign = delta > 0 ? "+" : "";
   return {
     direction: delta > 0 ? "up" : "down",
@@ -91,7 +97,7 @@ export function computeSuccessRateTrend(
   if (!isFiniteNumber(previousErrorRate)) return null;
   const safeCurrent = isFiniteNumber(currentErrorRate) ? currentErrorRate : 0;
   const delta = previousErrorRate - safeCurrent;
-  if (Math.abs(delta) < NEUTRAL_THRESHOLD.errorRate) return stableTrend(false);
+  if (Math.abs(delta) < NEUTRAL_THRESHOLD.ratePoints) return stableTrend(false);
   const sign = delta > 0 ? "+" : "";
   return {
     direction: delta > 0 ? "up" : "down",
