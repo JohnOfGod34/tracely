@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Activity, Clock, Radio } from "lucide-react";
+import { Activity, Radio } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { buildLiveUrl } from "@/lib/liveLinks";
 import type { DataEnvelope } from "@/types/api";
@@ -64,20 +64,11 @@ export function DashboardEmptyState({
         <div>
           <p className="text-base font-medium text-foreground">No activity in this period</p>
           <p className="mt-1 max-w-md text-sm text-muted-foreground">
-            No requests were recorded for {timeRangeLabel.toLowerCase()}. Try a shorter window or
-            check the live stream for recent events.
+            No requests were recorded for {timeRangeLabel.toLowerCase()}. Open the live stream
+            for real-time events or try a wider window.
           </p>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row">
-          {timeRange.preset !== "5m" && (
-            <Link
-              href={`/${orgSlug}/${projectSlug}/dashboard?time=5m`}
-              className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-md border border-border bg-background px-4 py-2 text-sm font-medium hover:bg-accent"
-            >
-              <Clock className="size-4" aria-hidden />
-              View last 5 minutes
-            </Link>
-          )}
           <Link
             href={buildLiveUrl(orgSlug, projectSlug, { timeRange, environment })}
             className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"

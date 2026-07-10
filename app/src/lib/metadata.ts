@@ -104,7 +104,7 @@ export const getDashboardMetrics = cache(async (
   params: DashboardMetricsParams = {}
 ): Promise<DashboardMetricsResponse | null> => {
   const search = new URLSearchParams();
-  search.set("time", params.time ?? "5m");
+  search.set("time", params.time ?? "15m");
   if (params.start) search.set("start", params.start);
   if (params.end) search.set("end", params.end);
   if (params.env) search.set("env", params.env);

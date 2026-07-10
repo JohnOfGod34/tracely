@@ -1,78 +1,88 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { memo, useCallback, useMemo } from "react";
 import {
   ResponsiveContainer,
-  AreaChart,
-  Area,
+  BarChart,
+  Bar,
   XAxis,
   YAxis,
   Tooltip,
   CartesianGrid,
+  Cell,
 } from "recharts";
 import type { DataPoint } from "@/types/dashboard";
-import type { TimeRange } from "@/types/span";
+import type { TimeRange, TimeRangePreset } from "@/types/span";
+import { useRouter } from "next/navigation";
 import { buildLiveUrl } from "@/lib/liveLinks";
 import { DashboardPanel } from "@/components/dashboard/DashboardPanel";
-import { DASHBOARD_CHART } from "@/lib/dashboardChartTheme";
+import { DashboardWindowNudge } from "@/components/dashboard/DashboardWindowNudge";
+import { DashboardChartTooltip } from "@/components/dashboard/charts/DashboardChartTooltip";
+import { DASHBOARD_CHART, formatAggregatedAxisTick } from "@/lib/dashboardChartTheme";
+import {
+  aggregateTimeSeries,
+  formatCompactNumber,
+  getBucketMsForTimeRange,
+} from "@/lib/dashboardChartAggregation";
 
 interface ErrorsTimelineWidgetProps {
   data: DataPoint[];
+  timeRange: TimeRange;
   orgSlug?: string;
   projectSlug?: string;
-  timeRange?: TimeRange;
   environment?: string | null;
+  onExpandWindow?: (preset: TimeRangePreset) => void;
   className?: string;
 }
 
-interface ChartPoint {
-  time: string;
-  errors: number;
-  timestamp: string;
+function timeRangeKey(timeRange: TimeRange): string {
+  return `${timeRange.preset}|${timeRange.start ?? ""}|${timeRange.end ?? ""}`;
 }
 
-export function ErrorsTimelineWidget({
+function ErrorsTimelineWidgetInner({
   data,
+  timeRange,
   orgSlug,
   projectSlug,
-  timeRange,
   environment,
+  onExpandWindow,
   className,
 }: ErrorsTimelineWidgetProps) {
   const router = useRouter();
-  const drillDown = !!(orgSlug && projectSlug && timeRange);
+  const drillDown = !!(orgSlug && projectSlug);
+  const rangeKey = timeRangeKey(timeRange);
 
-  const chartData: ChartPoint[] = data.map((point) => ({
-    time: new Date(point.timestamp).toLocaleTimeString("en-US", {
-      hour: "2-digit",
-      minute: "2-digit",
-    }),
-    errors: point.value,
-    timestamp: point.timestamp,
-  }));
+  const chartData = useMemo(() => {
+    const bucketMs = getBucketMsForTimeRange(timeRange);
+    return aggregateTimeSeries(data, bucketMs, "sum");
+  }, [data, rangeKey, timeRange]);
 
-  const totalErrors = data.reduce((sum, d) => sum + d.value, 0);
+  const totalErrors = useMemo(() => data.reduce((sum, d) => sum + d.value, 0), [data]);
 
-  const navigateToErrorBucket = (point: ChartPoint) => {
-    if (!drillDown || point.errors <= 0) return;
+  const navigateToErrorBucket = useCallback(
+    (timestamp: string, errors: number) => {
+      if (!drillDown || errors <= 0) return;
 
-    const start = point.timestamp;
-    const end = new Date(new Date(point.timestamp).getTime() + 60_000).toISOString();
-    router.push(
-      buildLiveUrl(orgSlug!, projectSlug!, {
-        timeRange: { preset: "custom", start, end },
-        environment,
-        statusGroups: ["4xx", "5xx"],
-      })
-    );
-  };
+      const bucketMs = getBucketMsForTimeRange(timeRange);
+      const start = timestamp;
+      const end = new Date(new Date(timestamp).getTime() + bucketMs).toISOString();
+      router.push(
+        buildLiveUrl(orgSlug!, projectSlug!, {
+          timeRange: { preset: "custom", start, end },
+          environment,
+          statusGroups: ["4xx", "5xx"],
+        })
+      );
+    },
+    [drillDown, timeRange, orgSlug, projectSlug, environment, router]
+  );
 
-  const resolveClickedPoint = (
+  const resolveClickedIndex = (
     state: { activeTooltipIndex?: string | number | null; activeIndex?: string | number | null }
-  ): ChartPoint | null => {
+  ): number | null => {
     const rawIndex = state.activeTooltipIndex ?? state.activeIndex;
     if (rawIndex == null || rawIndex === "") return null;
-    return chartData[Number(rawIndex)] ?? null;
+    return Number(rawIndex);
   };
 
   return (
@@ -82,64 +92,87 @@ export function ErrorsTimelineWidget({
       className={className}
       action={
         <span className="text-xs tabular-nums text-muted-foreground">
-          {totalErrors} total
+          {totalErrors.toLocaleString()} total
         </span>
       }
     >
       <div
-        className={drillDown ? "h-[140px] cursor-pointer" : "h-[140px]"}
+        className={`${DASHBOARD_CHART.heightClass} ${drillDown ? "cursor-pointer touch-manipulation" : ""}`}
         aria-label={`Errors over time, ${totalErrors} total`}
       >
         <ResponsiveContainer width="100%" height="100%">
-          <AreaChart
+          <BarChart
             data={chartData}
-            margin={{ top: 8, right: 8, left: -20, bottom: 0 }}
+            margin={DASHBOARD_CHART.margin}
             onClick={
               drillDown
                 ? (state) => {
-                    const point = resolveClickedPoint(state);
-                    if (point) navigateToErrorBucket(point);
+                    const index = resolveClickedIndex(state);
+                    if (index == null) return;
+                    const point = chartData[index];
+                    if (point) navigateToErrorBucket(point.timestamp, point.value);
                   }
                 : undefined
             }
           >
             <CartesianGrid strokeDasharray="3 3" stroke={DASHBOARD_CHART.grid} vertical={false} />
             <XAxis
-              dataKey="time"
+              dataKey="label"
               tick={{ fontSize: 10, fill: DASHBOARD_CHART.axis }}
               tickLine={false}
               axisLine={false}
-              interval="preserveStartEnd"
+              interval={0}
+              tickFormatter={(label, index) => formatAggregatedAxisTick(chartData, String(label), index)}
             />
             <YAxis
               tick={{ fontSize: 10, fill: DASHBOARD_CHART.axis }}
               tickLine={false}
               axisLine={false}
-              width={40}
+              width={36}
               allowDecimals={false}
+              tickFormatter={(v) => formatCompactNumber(Number(v))}
             />
             <Tooltip
-              contentStyle={{
-                backgroundColor: "var(--card)",
-                border: "1px solid var(--border)",
-                borderRadius: "6px",
-                fontSize: "12px",
+              cursor={DASHBOARD_CHART.tooltipCursor}
+              content={({ active, payload }) => {
+                if (!active || !payload?.length) return null;
+                const point = payload[0]?.payload as (typeof chartData)[0];
+                return (
+                  <DashboardChartTooltip label={point.label}>
+                    <span className="text-destructive">
+                      {Math.round(point.value).toLocaleString()} errors
+                    </span>
+                  </DashboardChartTooltip>
+                );
               }}
-              formatter={(value) => [`${value} errors`, "Errors"]}
             />
-            <Area
-              type="monotone"
-              dataKey="errors"
-              stroke="var(--dash-status-5xx)"
-              strokeWidth={1.5}
-              fill="var(--dash-status-5xx)"
-              fillOpacity={0.15}
-            />
-          </AreaChart>
+            <Bar
+              dataKey="value"
+              activeBar={DASHBOARD_CHART.activeBarError}
+              radius={[2, 2, 0, 0]}
+              maxBarSize={28}
+            >
+              {chartData.map((entry, index) => (
+                <Cell
+                  key={`cell-${index}`}
+                  fill={entry.value > 0 ? "var(--dash-status-5xx)" : "transparent"}
+                />
+              ))}
+            </Bar>
+          </BarChart>
         </ResponsiveContainer>
       </div>
+      {totalErrors === 0 && (
+        <DashboardWindowNudge
+          subject="error activity"
+          timeRange={timeRange}
+          onExpandWindow={onExpandWindow}
+          className="mt-2"
+        />
+      )}
     </DashboardPanel>
   );
 }
 
+export const ErrorsTimelineWidget = memo(ErrorsTimelineWidgetInner);
 export default ErrorsTimelineWidget;

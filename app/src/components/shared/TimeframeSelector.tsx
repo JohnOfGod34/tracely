@@ -1,10 +1,29 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useCallback } from "react";
 import { cn } from "@/lib/utils";
 import type { TimeRange, TimeRangePreset } from "@/types/span";
 
-// Time presets available for selection
+const DateRangePicker = dynamic(
+  () =>
+    import("@/components/shared/DateRangePicker").then((m) => ({
+      default: m.DateRangePicker,
+    })),
+  {
+    loading: () => (
+      <button
+        type="button"
+        disabled
+        className="inline-flex h-7 min-h-9 items-center rounded-md border bg-background px-2 text-xs text-muted-foreground sm:min-h-7"
+      >
+        Select range…
+      </button>
+    ),
+  }
+);
+
+// Time presets available for selection (Live and shared defaults)
 export const TIME_PRESETS: { key: TimeRangePreset; label: string }[] = [
   { key: "5m", label: "5 min" },
   { key: "15m", label: "15 min" },
@@ -14,10 +33,15 @@ export const TIME_PRESETS: { key: TimeRangePreset; label: string }[] = [
   { key: "custom", label: "Custom" },
 ];
 
+/** Dashboard presets — 15m minimum for meaningful trend analysis. */
+export const DASHBOARD_TIME_PRESETS = TIME_PRESETS.filter((p) => p.key !== "5m");
+
 interface TimeframeSelectorProps {
   timeRange: TimeRange;
   onTimeRangeChange: (range: TimeRange) => void;
   className?: string;
+  /** Override preset list (e.g. dashboard excludes 5m). */
+  presets?: { key: TimeRangePreset; label: string }[];
   /** Whether to show inline (horizontal) or as dropdown */
   variant?: "inline" | "dropdown";
   /** Visual style for inline preset buttons */
@@ -32,6 +56,7 @@ export function TimeframeSelector({
   timeRange,
   onTimeRangeChange,
   className,
+  presets = TIME_PRESETS,
   variant = "inline",
   appearance = "pill",
 }: TimeframeSelectorProps) {
@@ -47,30 +72,20 @@ export function TimeframeSelector({
     [onTimeRangeChange, timeRange]
   );
 
-  const handleCustomStart = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const iso = e.target.value ? new Date(e.target.value).toISOString() : undefined;
-      onTimeRangeChange({ preset: "custom", start: iso, end: timeRange.end });
+  const handleCustomRangeApply = useCallback(
+    (start: string, end: string) => {
+      onTimeRangeChange({ preset: "custom", start, end });
     },
-    [onTimeRangeChange, timeRange.end]
+    [onTimeRangeChange]
   );
 
-  const handleCustomEnd = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const iso = e.target.value ? new Date(e.target.value).toISOString() : undefined;
-      onTimeRangeChange({ preset: "custom", start: timeRange.start, end: iso });
-    },
-    [onTimeRangeChange, timeRange.start]
+  const customRangePicker = timeRange.preset === "custom" && (
+    <DateRangePicker
+      start={timeRange.start}
+      end={timeRange.end}
+      onApply={handleCustomRangeApply}
+    />
   );
-
-  // Format ISO to datetime-local input value
-  const formatForInput = (iso?: string) => {
-    if (!iso) return "";
-    const date = new Date(iso);
-    const offset = date.getTimezoneOffset() * 60000;
-    const localISOTime = new Date(date.getTime() - offset).toISOString().slice(0, 16);
-    return localISOTime;
-  };
 
   if (variant === "dropdown") {
     return (
@@ -81,32 +96,14 @@ export function TimeframeSelector({
           className="h-8 rounded-md border border-input bg-background px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
           aria-label="Time range"
         >
-          {TIME_PRESETS.map((preset) => (
+          {presets.map((preset) => (
             <option key={preset.key} value={preset.key}>
               {preset.label}
             </option>
           ))}
         </select>
 
-        {timeRange.preset === "custom" && (
-          <div className="flex items-center gap-2">
-            <input
-              type="datetime-local"
-              value={formatForInput(timeRange.start)}
-              onChange={handleCustomStart}
-              className="h-8 rounded-md border border-input bg-background px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-              aria-label="Start time"
-            />
-            <span className="text-muted-foreground">to</span>
-            <input
-              type="datetime-local"
-              value={formatForInput(timeRange.end)}
-              onChange={handleCustomEnd}
-              className="h-8 rounded-md border border-input bg-background px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-              aria-label="End time"
-            />
-          </div>
-        )}
+        {customRangePicker}
       </div>
     );
   }
@@ -124,7 +121,7 @@ export function TimeframeSelector({
       role="group"
       aria-label="Time range"
     >
-      {TIME_PRESETS.filter((p) => p.key !== "custom").map((preset) => (
+      {presets.filter((p) => p.key !== "custom").map((preset) => (
         <button
           key={preset.key}
           type="button"
@@ -172,23 +169,9 @@ export function TimeframeSelector({
         Custom
       </button>
 
-      {timeRange.preset === "custom" && (
-        <div className="flex items-center gap-2 ml-2">
-          <input
-            type="datetime-local"
-            value={formatForInput(timeRange.start)}
-            onChange={handleCustomStart}
-            className="h-8 rounded-md border border-input bg-background px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-            aria-label="Start time"
-          />
-          <span className="text-muted-foreground text-sm">to</span>
-          <input
-            type="datetime-local"
-            value={formatForInput(timeRange.end)}
-            onChange={handleCustomEnd}
-            className="h-8 rounded-md border border-input bg-background px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-            aria-label="End time"
-          />
+      {customRangePicker && (
+        <div className="ml-0 w-full basis-full sm:ml-2 sm:w-auto sm:basis-auto">
+          {customRangePicker}
         </div>
       )}
     </div>

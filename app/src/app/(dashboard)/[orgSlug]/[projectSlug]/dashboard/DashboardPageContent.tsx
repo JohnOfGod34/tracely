@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -15,6 +16,8 @@ import {
   buildLiveUrl,
   parseTimeRangeFromSearchParams,
   matchesDashboardSsrPrefetch,
+  normalizeDashboardTimeRange,
+  DASHBOARD_DEFAULT_PRESET,
 } from "@/lib/liveLinks";
 import { DashboardEmptyState } from "@/components/dashboard/DashboardEmptyState";
 import { mergeDuplicateEndpoints } from "@/lib/endpointStats";
@@ -23,11 +26,12 @@ import {
   getAttentionServices,
   summarizeProjectStatus,
 } from "@/lib/projectHealthStatus";
-import { TimeframeSelector } from "@/components/shared/TimeframeSelector";
+import { TimeframeSelector, DASHBOARD_TIME_PRESETS } from "@/components/shared/TimeframeSelector";
 import { DashboardStatusBanner } from "@/components/dashboard/DashboardStatusBanner";
 import { ActiveAlertsStrip } from "@/components/dashboard/ActiveAlertsStrip";
 import { NeedsAttentionPanel } from "@/components/dashboard/NeedsAttentionPanel";
 import { DashboardEnvironmentFilter } from "@/components/dashboard/DashboardEnvironmentFilter";
+import { DashboardWindowNudge } from "@/components/dashboard/DashboardWindowNudge";
 import {
   computeErrorRateTrend,
   computeLatencyTrend,
@@ -38,13 +42,41 @@ import {
 import {
   ServiceStatusWidget,
   WidgetSkeleton,
-  ThroughputWidget,
-  StatusCodeWidget,
   TopEndpointsWidget,
-  LatencyDistributionWidget,
-  ErrorsTimelineWidget,
   MetricCard,
 } from "@/components/dashboard/widgets";
+
+const ChartWidgetSkeleton = ({ className }: { className?: string }) => (
+  <div className={className}>
+    <WidgetSkeleton />
+  </div>
+);
+
+const ThroughputWidget = dynamic(
+  () => import("@/components/dashboard/widgets/ThroughputWidget").then((m) => m.ThroughputWidget),
+  { loading: () => <ChartWidgetSkeleton className="col-span-12 lg:col-span-8 h-[220px]" /> }
+);
+
+const StatusCodeWidget = dynamic(
+  () => import("@/components/dashboard/widgets/StatusCodeWidget").then((m) => m.StatusCodeWidget),
+  { loading: () => <ChartWidgetSkeleton className="col-span-12 sm:col-span-6 lg:col-span-4 h-[220px]" /> }
+);
+
+const ErrorsTimelineWidget = dynamic(
+  () =>
+    import("@/components/dashboard/widgets/ErrorsTimelineWidget").then(
+      (m) => m.ErrorsTimelineWidget
+    ),
+  { loading: () => <ChartWidgetSkeleton className="col-span-12 lg:col-span-6 h-[220px]" /> }
+);
+
+const LatencyDistributionWidget = dynamic(
+  () =>
+    import("@/components/dashboard/widgets/LatencyDistributionWidget").then(
+      (m) => m.LatencyDistributionWidget
+    ),
+  { loading: () => <ChartWidgetSkeleton className="col-span-12 lg:col-span-6 h-[220px]" /> }
+);
 
 interface ProjectInfo {
   id: string;
@@ -124,51 +156,44 @@ function DashboardPageInner({
   const storeTimeRange = filters.timeRange;
   const environment = filters.environment;
 
-  // Prefer URL timeframe on first paint (before useEffect hydrates the store)
+  // Prefer URL timeframe on first paint; dashboard minimum is 15m (not 5m).
   const effectiveTimeRange = useMemo(() => {
     const fromUrl = parseTimeRangeFromSearchParams(searchParams);
-    return fromUrl ?? storeTimeRange;
+    return normalizeDashboardTimeRange(fromUrl ?? storeTimeRange);
   }, [searchParams, storeTimeRange]);
 
   const timeRange = storeTimeRange;
 
-  // Hydrate filter store from URL before paint (avoids a 5m query when URL says 24h)
+  // Hydrate filter store from URL before paint (avoids a 15m query when URL says 24h)
   const hydratedRef = useRef(false);
   useLayoutEffect(() => {
     if (hydratedRef.current) return;
     hydratedRef.current = true;
 
-    const time = searchParams.get("time");
-    const start = searchParams.get("start");
-    const end = searchParams.get("end");
+    const fromUrl = parseTimeRangeFromSearchParams(searchParams);
     const env = searchParams.get("env");
 
-    if (time) {
-      const validPresets = new Set(["5m", "15m", "1h", "6h", "24h", "custom"]);
-      if (validPresets.has(time)) {
-        setTimeRange({
-          preset: time as TimeRangePreset,
-          start: start ?? undefined,
-          end: end ?? undefined,
-        });
-      }
-    }
+    const range = normalizeDashboardTimeRange(
+      fromUrl ?? useFilterStore.getState().filters.timeRange
+    );
+    setTimeRange(range);
 
     const store = useFilterStore.getState();
     if (env && env !== "unknown") store.setEnvironment(env);
     else if (env === "unknown") store.setEnvironment("unknown");
   }, [searchParams, setTimeRange]);
 
-  // Sync timeRange to URL
+  // Sync timeRange to URL (15m is the implicit default — no query param)
   useEffect(() => {
+    const range = normalizeDashboardTimeRange(timeRange);
     const params = new URLSearchParams();
 
-    if (timeRange.preset !== "5m") {
-      params.set("time", timeRange.preset);
+    if (range.preset !== DASHBOARD_DEFAULT_PRESET) {
+      params.set("time", range.preset);
     }
-    if (timeRange.preset === "custom") {
-      if (timeRange.start) params.set("start", timeRange.start);
-      if (timeRange.end) params.set("end", timeRange.end);
+    if (range.preset === "custom") {
+      if (range.start) params.set("start", range.start);
+      if (range.end) params.set("end", range.end);
     }
     if (environment && environment !== "unknown") {
       params.set("env", environment);
@@ -182,7 +207,14 @@ function DashboardPageInner({
   // Handle timeframe change
   const handleTimeRangeChange = useCallback(
     (range: TimeRange) => {
-      setTimeRange(range);
+      setTimeRange(normalizeDashboardTimeRange(range));
+    },
+    [setTimeRange]
+  );
+
+  const handleExpandWindow = useCallback(
+    (preset: TimeRangePreset) => {
+      setTimeRange({ preset });
     },
     [setTimeRange]
   );
@@ -390,6 +422,18 @@ function DashboardPageInner({
     ? formatSuccessRate(dashboardData.error_rate)
     : "—";
 
+  const hasHttpErrors = useMemo(
+    () =>
+      dashboardData?.status_codes.some((sc) => sc.code === "4xx" || sc.code === "5xx") ?? false,
+    [dashboardData?.status_codes]
+  );
+
+  const showErrorRateNudge =
+    !!dashboardData &&
+    dashboardData.total_requests > 0 &&
+    dashboardData.error_rate === 0 &&
+    !hasHttpErrors;
+
   const errorTone =
     dashboardData && dashboardData.error_rate > 5
       ? "critical"
@@ -419,6 +463,7 @@ function DashboardPageInner({
           <TimeframeSelector
             timeRange={effectiveTimeRange}
             onTimeRangeChange={handleTimeRangeChange}
+            presets={DASHBOARD_TIME_PRESETS}
             variant="inline"
             appearance="segmented"
           />
@@ -473,6 +518,7 @@ function DashboardPageInner({
             invertTrendColors={requestTrend?.invertColors}
             className="col-span-6 lg:col-span-3"
           />
+          <div className="col-span-6 flex flex-col gap-2 lg:col-span-3">
           <MetricCard
             title="Error rate"
             value={`${dashboardData.error_rate.toFixed(2)}%`}
@@ -480,8 +526,16 @@ function DashboardPageInner({
             trendValue={errorTrend?.label}
             invertTrendColors={errorTrend?.invertColors}
             tone={errorTone}
-            className="col-span-6 lg:col-span-3"
+            className="flex-1"
           />
+          {showErrorRateNudge && (
+            <DashboardWindowNudge
+              subject="error activity"
+              timeRange={effectiveTimeRange}
+              onExpandWindow={handleExpandWindow}
+            />
+          )}
+          </div>
           <MetricCard
             title="P95 latency"
             value={dashboardData.p95_latency >= 1000 ? `${(dashboardData.p95_latency / 1000).toFixed(2)}s` : `${Math.round(dashboardData.p95_latency)}ms`}
@@ -520,6 +574,7 @@ function DashboardPageInner({
           {/* Row 2: Main charts */}
           <ThroughputWidget
             data={dashboardData.requests_per_minute}
+            timeRange={effectiveTimeRange}
             className="col-span-12 lg:col-span-8"
           />
           <StatusCodeWidget
@@ -530,10 +585,11 @@ function DashboardPageInner({
           {/* Row 3: Secondary charts */}
           <ErrorsTimelineWidget
             data={dashboardData.errors_per_minute}
+            timeRange={effectiveTimeRange}
             orgSlug={orgSlug}
             projectSlug={projectSlug}
-            timeRange={effectiveTimeRange}
             environment={environment}
+            onExpandWindow={handleExpandWindow}
             className="col-span-12 lg:col-span-6"
           />
           <LatencyDistributionWidget
@@ -541,6 +597,8 @@ function DashboardPageInner({
             p50={dashboardData.p50_latency}
             p95={dashboardData.p95_latency}
             p99={dashboardData.p99_latency}
+            timeRange={effectiveTimeRange}
+            onExpandWindow={handleExpandWindow}
             className="col-span-12 lg:col-span-6"
           />
 
@@ -551,6 +609,7 @@ function DashboardPageInner({
             projectSlug={projectSlug}
             timeRange={effectiveTimeRange}
             environment={environment}
+            onExpandWindow={handleExpandWindow}
             className="col-span-12 lg:col-span-7"
           />
           <ServiceStatusWidget
@@ -559,6 +618,7 @@ function DashboardPageInner({
             projectSlug={projectSlug}
             timeRange={effectiveTimeRange}
             environment={environment}
+            onExpandWindow={handleExpandWindow}
             className="col-span-12 lg:col-span-5"
           />
         </div>

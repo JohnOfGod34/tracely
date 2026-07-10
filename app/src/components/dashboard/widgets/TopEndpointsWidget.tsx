@@ -5,9 +5,10 @@ import Link from "next/link";
 import { ChevronRight } from "lucide-react";
 import { mergeDuplicateWidgetEndpoints, endpointReactKey } from "@/lib/endpointStats";
 import { cn } from "@/lib/utils";
-import type { TimeRange } from "@/types/span";
+import type { TimeRange, TimeRangePreset } from "@/types/span";
 import { buildLiveUrl } from "@/lib/liveLinks";
 import { DashboardPanel } from "@/components/dashboard/DashboardPanel";
+import { DashboardWindowNudge } from "@/components/dashboard/DashboardWindowNudge";
 
 export interface EndpointStats {
   route: string;
@@ -25,6 +26,7 @@ interface TopEndpointsWidgetProps {
   projectSlug?: string;
   timeRange?: TimeRange;
   environment?: string | null;
+  onExpandWindow?: (preset: TimeRangePreset) => void;
   className?: string;
 }
 
@@ -52,6 +54,7 @@ export function TopEndpointsWidget({
   projectSlug,
   timeRange,
   environment,
+  onExpandWindow,
   className,
 }: TopEndpointsWidgetProps) {
   const [sortMode, setSortMode] = useState<SortMode>("volume");
@@ -91,7 +94,14 @@ export function TopEndpointsWidget({
       </div>
 
       {sortedEndpoints.length === 0 ? (
-        <p className="py-6 text-center text-sm text-muted-foreground">No endpoint data</p>
+        <div className="space-y-3 py-4">
+          <p className="text-center text-sm text-muted-foreground">No endpoint data</p>
+          <DashboardWindowNudge
+            subject="endpoint data"
+            timeRange={timeRange}
+            onExpandWindow={onExpandWindow}
+          />
+        </div>
       ) : (
         <ul className="divide-y divide-border">
           {sortedEndpoints.slice(0, 5).map((endpoint) => (

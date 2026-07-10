@@ -19,7 +19,7 @@ export default async function DashboardPage({ params }: PageProps) {
 
   const [project, initialMetrics] = await Promise.all([
     getProject(orgSlug, projectSlug),
-    getDashboardMetrics(orgSlug, projectSlug, { time: "5m" }),
+    getDashboardMetrics(orgSlug, projectSlug, { time: "15m" }),
   ]);
 
   return (

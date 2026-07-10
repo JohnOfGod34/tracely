@@ -4,9 +4,10 @@ import Link from "next/link";
 import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ServiceStatus } from "@/types/dashboard";
-import type { TimeRange } from "@/types/span";
+import type { TimeRange, TimeRangePreset } from "@/types/span";
 import { buildLiveUrl } from "@/lib/liveLinks";
 import { DashboardPanel } from "@/components/dashboard/DashboardPanel";
+import { DashboardWindowNudge } from "@/components/dashboard/DashboardWindowNudge";
 import { STATUS_DOT, errorRateTextClass, latencyTextClass } from "@/lib/statusStyles";
 
 interface ServiceStatusWidgetProps {
@@ -15,6 +16,7 @@ interface ServiceStatusWidgetProps {
   projectSlug?: string;
   timeRange?: TimeRange;
   environment?: string | null;
+  onExpandWindow?: (preset: TimeRangePreset) => void;
   className?: string;
 }
 
@@ -30,6 +32,7 @@ export function ServiceStatusWidget({
   projectSlug,
   timeRange,
   environment,
+  onExpandWindow,
   className,
 }: ServiceStatusWidgetProps) {
   const drillDown = !!(orgSlug && projectSlug && timeRange);
@@ -47,7 +50,14 @@ export function ServiceStatusWidget({
       }
     >
       {services.length === 0 ? (
-        <p className="py-6 text-center text-sm text-muted-foreground">No services detected</p>
+        <div className="space-y-3 py-4">
+          <p className="text-center text-sm text-muted-foreground">No services detected</p>
+          <DashboardWindowNudge
+            subject="a service"
+            timeRange={timeRange}
+            onExpandWindow={onExpandWindow}
+          />
+        </div>
       ) : (
         <ul className="divide-y divide-border">
           {services.map((service) => {

@@ -16,6 +16,21 @@ export function statusCodeChartColor(code: string): string {
 
 export const DASHBOARD_CHART = {
   bar: "var(--dash-chart-bar)",
+  barActive: "var(--dash-chart-bar-active)",
   grid: "var(--border)",
   axis: "var(--muted-foreground)",
+  margin: { top: 8, right: 4, left: 0, bottom: 0 },
+  heightClass: "h-[144px] sm:h-[168px]",
+  /** Recharts Tooltip defaults to a full-height gray column on hover/click. */
+  tooltipCursor: false as const,
+  activeBar: { fill: "var(--dash-chart-bar-active)" },
+  activeBarError: { fill: "var(--dash-status-5xx)", fillOpacity: 0.88 },
 } as const;
+
+export function formatAggregatedAxisTick(
+  chartData: { showTick: boolean; label: string }[],
+  label: string,
+  index: number
+): string {
+  return chartData[index]?.showTick ? label : "";
+}

@@ -1,5 +1,6 @@
 "use client";
 
+import { memo, useMemo } from "react";
 import {
   ResponsiveContainer,
   BarChart,
@@ -10,24 +11,35 @@ import {
   CartesianGrid,
 } from "recharts";
 import type { DataPoint } from "@/types/dashboard";
+import type { TimeRange } from "@/types/span";
 import { DashboardPanel } from "@/components/dashboard/DashboardPanel";
-import { DASHBOARD_CHART } from "@/lib/dashboardChartTheme";
+import { DashboardChartTooltip } from "@/components/dashboard/charts/DashboardChartTooltip";
+import { DASHBOARD_CHART, formatAggregatedAxisTick } from "@/lib/dashboardChartTheme";
+import {
+  aggregateTimeSeries,
+  computeThroughputStats,
+  formatCompactNumber,
+  getBucketMsForTimeRange,
+} from "@/lib/dashboardChartAggregation";
 
 interface ThroughputWidgetProps {
   data: DataPoint[];
+  timeRange: TimeRange;
   className?: string;
 }
 
-export function ThroughputWidget({ data, className }: ThroughputWidgetProps) {
-  const chartData = data.map((point) => ({
-    time: new Date(point.timestamp).toLocaleTimeString("en-US", {
-      hour: "2-digit",
-      minute: "2-digit",
-    }),
-    value: point.value,
-  }));
+function timeRangeKey(timeRange: TimeRange): string {
+  return `${timeRange.preset}|${timeRange.start ?? ""}|${timeRange.end ?? ""}`;
+}
 
-  const peakRate = data.length ? Math.max(...data.map((d) => d.value)) : 0;
+function ThroughputWidgetInner({ data, timeRange, className }: ThroughputWidgetProps) {
+  const stats = useMemo(() => computeThroughputStats(data), [data]);
+  const rangeKey = timeRangeKey(timeRange);
+
+  const chartData = useMemo(() => {
+    const bucketMs = getBucketMsForTimeRange(timeRange);
+    return aggregateTimeSeries(data, bucketMs, "avg");
+  }, [data, rangeKey, timeRange]);
 
   return (
     <DashboardPanel
@@ -35,43 +47,67 @@ export function ThroughputWidget({ data, className }: ThroughputWidgetProps) {
       testId="throughput-widget"
       className={className}
       action={
-        <span className="text-sm font-semibold tabular-nums">
-          {peakRate.toLocaleString()}
-          <span className="ml-1 text-xs font-normal text-muted-foreground">peak/min</span>
+        <span className="flex flex-wrap items-center justify-end gap-x-1.5 gap-y-0.5 text-xs tabular-nums text-muted-foreground">
+          <span>
+            avg {formatCompactNumber(stats.avg)}
+            <span className="ml-1">/min</span>
+          </span>
+          <span className="hidden text-border sm:inline" aria-hidden>
+            ·
+          </span>
+          <span className="hidden sm:inline">
+            peak {formatCompactNumber(stats.peak)}
+            <span className="ml-1">/min</span>
+          </span>
         </span>
       }
     >
-      <div className="h-[140px]" aria-label={`Throughput chart, peak ${peakRate} per minute`}>
+      <div
+        className={DASHBOARD_CHART.heightClass}
+        aria-label={`Throughput chart, average ${Math.round(stats.avg)} per minute, peak ${Math.round(stats.peak)}`}
+      >
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={chartData} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
+          <BarChart data={chartData} margin={DASHBOARD_CHART.margin}>
             <CartesianGrid strokeDasharray="3 3" stroke={DASHBOARD_CHART.grid} vertical={false} />
             <XAxis
-              dataKey="time"
+              dataKey="label"
               tick={{ fontSize: 10, fill: DASHBOARD_CHART.axis }}
               tickLine={false}
               axisLine={false}
-              interval="preserveStartEnd"
+              interval={0}
+              tickFormatter={(label, index) => formatAggregatedAxisTick(chartData, String(label), index)}
             />
             <YAxis
               tick={{ fontSize: 10, fill: DASHBOARD_CHART.axis }}
               tickLine={false}
               axisLine={false}
-              width={40}
+              width={44}
+              tickFormatter={(v) => formatCompactNumber(Number(v))}
+              allowDecimals={false}
             />
             <Tooltip
-              contentStyle={{
-                backgroundColor: "var(--card)",
-                border: "1px solid var(--border)",
-                borderRadius: "6px",
-                fontSize: "12px",
+              cursor={DASHBOARD_CHART.tooltipCursor}
+              content={({ active, payload }) => {
+                if (!active || !payload?.length) return null;
+                const point = payload[0]?.payload as (typeof chartData)[0];
+                return (
+                  <DashboardChartTooltip label={point.label}>
+                    <p>{Math.round(point.value).toLocaleString()} req/min avg</p>
+                    {point.peakInBucket != null && point.peakInBucket !== point.value && (
+                      <p className="mt-0.5 font-normal text-muted-foreground">
+                        peak {Math.round(point.peakInBucket).toLocaleString()} req/min
+                      </p>
+                    )}
+                  </DashboardChartTooltip>
+                );
               }}
-              formatter={(value) => [`${Number(value).toLocaleString()} req/min`, "Throughput"]}
             />
             <Bar
               dataKey="value"
               fill={DASHBOARD_CHART.bar}
+              activeBar={DASHBOARD_CHART.activeBar}
               radius={[2, 2, 0, 0]}
-              maxBarSize={20}
+              maxBarSize={28}
             />
           </BarChart>
         </ResponsiveContainer>
@@ -80,4 +116,5 @@ export function ThroughputWidget({ data, className }: ThroughputWidgetProps) {
   );
 }
 
+export const ThroughputWidget = memo(ThroughputWidgetInner);
 export default ThroughputWidget;

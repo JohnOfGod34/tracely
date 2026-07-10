@@ -65,6 +65,28 @@ export function formatTimeRangeLabel(timeRange: TimeRange): string {
 
 const VALID_PRESETS = new Set<string>(["5m", "15m", "1h", "6h", "24h", "custom"]);
 
+/** Dashboard default — 15m is the shortest window (5m is Live-only). */
+export const DASHBOARD_DEFAULT_PRESET: TimeRangePreset = "15m";
+
+const DASHBOARD_VALID_PRESETS = new Set<string>([
+  "15m",
+  "1h",
+  "6h",
+  "24h",
+  "custom",
+]);
+
+/** Clamp Live/legacy presets to a dashboard-supported window. */
+export function normalizeDashboardTimeRange(timeRange: TimeRange): TimeRange {
+  if (timeRange.preset === "5m") {
+    return { preset: DASHBOARD_DEFAULT_PRESET };
+  }
+  if (DASHBOARD_VALID_PRESETS.has(timeRange.preset)) {
+    return timeRange;
+  }
+  return { preset: DASHBOARD_DEFAULT_PRESET };
+}
+
 /** Read timeframe from URL search params (sync, for first-paint query keys). */
 export function parseTimeRangeFromSearchParams(
   params: Pick<URLSearchParams, "get">
@@ -79,13 +101,13 @@ export function parseTimeRangeFromSearchParams(
   };
 }
 
-/** True when client query params match the SSR dashboard prefetch (5m, no env). */
+/** True when client query params match the SSR dashboard prefetch (15m, no env). */
 export function matchesDashboardSsrPrefetch(
   timeRange: TimeRange,
   environment: string | null | undefined
 ): boolean {
   return (
-    timeRange.preset === "5m" &&
+    timeRange.preset === DASHBOARD_DEFAULT_PRESET &&
     !timeRange.start &&
     !timeRange.end &&
     !environment
