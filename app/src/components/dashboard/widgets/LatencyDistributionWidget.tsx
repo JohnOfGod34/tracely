@@ -18,6 +18,7 @@ import type { TimeRange, TimeRangePreset } from "@/types/span";
 import { DashboardWindowNudge } from "@/components/dashboard/DashboardWindowNudge";
 import { DashboardChartTooltip } from "@/components/dashboard/charts/DashboardChartTooltip";
 import { latencyMsToBucketLabel, formatCompactNumber } from "@/lib/dashboardChartAggregation";
+import { DASHBOARD_METRIC_HELP } from "@/lib/dashboardMetricHelp";
 
 interface LatencyDistributionWidgetProps {
   data: LatencyBucket[];
@@ -69,6 +70,7 @@ function LatencyDistributionWidgetInner({
   return (
     <DashboardPanel
       title="Latency"
+      description={DASHBOARD_METRIC_HELP.latencyDistribution}
       testId="latency-distribution-widget"
       className={className}
       action={

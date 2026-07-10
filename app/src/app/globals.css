@@ -115,6 +115,11 @@
   --dash-chart-bar: oklch(0.48 0.1 235);
   --dash-chart-bar-active: oklch(0.42 0.12 235);
   --dash-chart-neutral: oklch(0.48 0.1 235 / 0.2);
+
+  --dash-surface-elevated: oklch(0.99 0 0);
+  --dash-sparkline-neutral: oklch(0.48 0.1 235);
+  --dash-sparkline-positive: oklch(0.48 0.12 155);
+  --dash-sparkline-negative: oklch(0.55 0.2 25);
 }
 
 .dark {
@@ -171,6 +176,29 @@
   --dash-chart-bar: oklch(0.65 0.12 235);
   --dash-chart-bar-active: oklch(0.72 0.14 235);
   --dash-chart-neutral: oklch(0.65 0.12 235 / 0.18);
+
+  --dash-surface-elevated: oklch(0.16 0 0);
+  --dash-sparkline-neutral: oklch(0.65 0.12 235);
+  --dash-sparkline-positive: oklch(0.72 0.14 155);
+  --dash-sparkline-negative: oklch(0.65 0.18 25);
+}
+
+.dashboard-page {
+  --background: var(--dash-surface-elevated, var(--background));
+}
+
+.dashboard-page-header {
+  @apply border-b border-border pb-4;
+}
+
+.dashboard-panel {
+  @apply rounded-xl border border-border bg-card;
+  background-color: var(--card);
+}
+
+.dashboard-metric-card {
+  @apply rounded-xl border border-border bg-card;
+  background-color: var(--card);
 }
 
 @layer base {

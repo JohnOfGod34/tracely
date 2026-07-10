@@ -122,8 +122,22 @@ const PREVIOUS_PERIOD_LABELS: Record<Exclude<TimeRangePreset, "custom">, string>
   "24h": "previous 24 hours",
 };
 
+const TREND_BASELINE_LABELS: Record<Exclude<TimeRangePreset, "custom">, string> = {
+  "5m": "last 5 minutes",
+  "15m": "last 15 minutes",
+  "1h": "last hour",
+  "6h": "last 6 hours",
+  "24h": "last 24 hours",
+};
+
 /** Short label for trend comparisons tied to the selected timeframe. */
 export function formatPreviousPeriodLabel(timeRange: TimeRange): string {
   if (timeRange.preset === "custom") return "previous period";
   return PREVIOUS_PERIOD_LABELS[timeRange.preset];
+}
+
+/** Baseline window for KPI trends — use after "than" (e.g. "+12% than last 15 minutes"). */
+export function formatTrendBaselineLabel(timeRange: TimeRange): string {
+  if (timeRange.preset === "custom") return "previous period";
+  return TREND_BASELINE_LABELS[timeRange.preset];
 }

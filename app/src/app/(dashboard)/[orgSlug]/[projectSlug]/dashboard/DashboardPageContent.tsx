@@ -13,6 +13,7 @@ import { useFilterStore } from "@/stores/filterStore";
 import { useActiveAlerts } from "@/hooks/useActiveAlerts";
 import {
   formatTimeRangeLabel,
+  formatTrendBaselineLabel,
   buildLiveUrl,
   parseTimeRangeFromSearchParams,
   matchesDashboardSsrPrefetch,
@@ -20,16 +21,30 @@ import {
   DASHBOARD_DEFAULT_PRESET,
 } from "@/lib/liveLinks";
 import { DashboardEmptyState } from "@/components/dashboard/DashboardEmptyState";
+import { DashboardPageHeader } from "@/components/dashboard/DashboardPageHeader";
 import { mergeDuplicateEndpoints, resolveEndpointP95 } from "@/lib/endpointStats";
+import { computeHealthScore } from "@/lib/dashboardHealthScore";
+import {
+  errorRateTier,
+  latencyTier,
+  requestVolumeTier,
+  successRateTier,
+} from "@/lib/dashboardMetricTiers";
+import {
+  errorRateSparkline,
+  errorsSparkline,
+  flatSparkline,
+  requestsSparkline,
+  successRateSparkline,
+} from "@/lib/dashboardSparklines";
+import { DASHBOARD_METRIC_HELP } from "@/lib/dashboardMetricHelp";
 import {
   getAttentionEndpoints,
   getAttentionServices,
   summarizeProjectStatus,
 } from "@/lib/projectHealthStatus";
 import { TimeframeSelector, DASHBOARD_TIME_PRESETS } from "@/components/shared/TimeframeSelector";
-import { DashboardStatusBanner } from "@/components/dashboard/DashboardStatusBanner";
 import { ActiveAlertsStrip } from "@/components/dashboard/ActiveAlertsStrip";
-import { NeedsAttentionPanel } from "@/components/dashboard/NeedsAttentionPanel";
 import { DashboardEnvironmentFilter } from "@/components/dashboard/DashboardEnvironmentFilter";
 import { DashboardWindowNudge } from "@/components/dashboard/DashboardWindowNudge";
 import {
@@ -43,7 +58,7 @@ import {
   ServiceStatusWidget,
   WidgetSkeleton,
   TopEndpointsWidget,
-  MetricCard,
+  MetricSparklineCard,
 } from "@/components/dashboard/widgets";
 
 const ChartWidgetSkeleton = ({ className }: { className?: string }) => (
@@ -78,6 +93,18 @@ const LatencyDistributionWidget = dynamic(
   { loading: () => <ChartWidgetSkeleton className="col-span-12 lg:col-span-6 h-[220px]" /> }
 );
 
+const HealthOverviewPanel = dynamic(
+  () =>
+    import("@/components/dashboard/HealthOverviewPanel").then((m) => m.HealthOverviewPanel),
+  { loading: () => <ChartWidgetSkeleton className="col-span-12 lg:col-span-5 h-[280px]" /> }
+);
+
+const NeedsAttentionPanel = dynamic(
+  () =>
+    import("@/components/dashboard/NeedsAttentionPanel").then((m) => m.NeedsAttentionPanel),
+  { loading: () => <ChartWidgetSkeleton className="col-span-12 lg:col-span-7 h-[280px]" /> }
+);
+
 interface ProjectInfo {
   id: string;
   name: string;
@@ -95,24 +122,19 @@ export interface DashboardPageClientProps {
 // Skeleton grid for loading state
 function DashboardSkeleton() {
   return (
-    <div className="grid grid-cols-12 gap-4">
-      {/* Top row - metric cards */}
-      <div className="col-span-3"><WidgetSkeleton /></div>
-      <div className="col-span-3"><WidgetSkeleton /></div>
-      <div className="col-span-3"><WidgetSkeleton /></div>
-      <div className="col-span-3"><WidgetSkeleton /></div>
-
-      {/* Second row - charts */}
-      <div className="col-span-8 h-[200px]"><WidgetSkeleton /></div>
-      <div className="col-span-4 h-[200px]"><WidgetSkeleton /></div>
-
-      {/* Third row */}
-      <div className="col-span-6 h-[240px]"><WidgetSkeleton /></div>
-      <div className="col-span-6 h-[240px]"><WidgetSkeleton /></div>
-
-      {/* Fourth row */}
-      <div className="col-span-4 h-[280px]"><WidgetSkeleton /></div>
-      <div className="col-span-8 h-[280px]"><WidgetSkeleton /></div>
+    <div className="grid grid-cols-12 gap-3 sm:gap-4">
+      <div className="col-span-6 lg:col-span-3"><WidgetSkeleton /></div>
+      <div className="col-span-6 lg:col-span-3"><WidgetSkeleton /></div>
+      <div className="col-span-6 lg:col-span-3"><WidgetSkeleton /></div>
+      <div className="col-span-6 lg:col-span-3"><WidgetSkeleton /></div>
+      <div className="col-span-12 lg:col-span-5 h-[280px]"><WidgetSkeleton /></div>
+      <div className="col-span-12 lg:col-span-7 h-[280px]"><WidgetSkeleton /></div>
+      <div className="col-span-12 lg:col-span-8 h-[220px]"><WidgetSkeleton /></div>
+      <div className="col-span-12 sm:col-span-6 lg:col-span-4 h-[220px]"><WidgetSkeleton /></div>
+      <div className="col-span-12 lg:col-span-6 h-[220px]"><WidgetSkeleton /></div>
+      <div className="col-span-12 lg:col-span-6 h-[220px]"><WidgetSkeleton /></div>
+      <div className="col-span-12 lg:col-span-7 h-[280px]"><WidgetSkeleton /></div>
+      <div className="col-span-12 lg:col-span-5 h-[280px]"><WidgetSkeleton /></div>
     </div>
   );
 }
@@ -137,8 +159,8 @@ export default function DashboardPageClient({
 
 function DashboardPageSkeleton() {
   return (
-    <div className="p-4">
-      <div className="mb-4 h-12" />
+    <div className="dashboard-page min-h-full bg-background p-4 sm:p-6">
+      <div className="mb-6 h-20" />
       <DashboardSkeleton />
     </div>
   );
@@ -306,7 +328,7 @@ function DashboardPageInner({
     console.error("Dashboard metrics fetch error:", error);
   }
 
-  const { data: activeAlertsData, isLoading: alertsLoading } = useActiveAlerts({
+  const { data: activeAlertsData } = useActiveAlerts({
     orgSlug,
     projectSlug,
     enabled: !!projectId,
@@ -419,6 +441,10 @@ function DashboardPageInner({
     [dashboardData, previous?.error_rate]
   );
 
+  const successRateValue = dashboardData
+    ? Math.max(0, 100 - dashboardData.error_rate)
+    : 0;
+
   const successRate = dashboardData
     ? formatSuccessRate(dashboardData.error_rate)
     : "—";
@@ -449,36 +475,62 @@ function DashboardPageInner({
         ? "warning"
         : "default";
 
+  const healthScore = useMemo(
+    () => computeHealthScore(dashboardData?.services ?? []),
+    [dashboardData?.services]
+  );
+
+  const sparklines = useMemo(() => {
+    const requests = dashboardData?.requests_per_minute ?? [];
+    const errors = dashboardData?.errors_per_minute ?? [];
+    const p95 = dashboardData?.p95_latency ?? 0;
+    return {
+      requests: requestsSparkline(requests),
+      errors: errorsSparkline(errors),
+      errorRate: errorRateSparkline(requests, errors),
+      successRate: successRateSparkline(requests, errors),
+      latency: flatSparkline(p95),
+    };
+  }, [dashboardData?.requests_per_minute, dashboardData?.errors_per_minute, dashboardData?.p95_latency]);
+
+  const trendBaseline = formatTrendBaselineLabel(effectiveTimeRange);
+
+  const headerControls = (
+    <>
+      <DashboardEnvironmentFilter className="w-full sm:w-auto" />
+      <TimeframeSelector
+        timeRange={effectiveTimeRange}
+        onTimeRangeChange={handleTimeRangeChange}
+        presets={DASHBOARD_TIME_PRESETS}
+        variant="inline"
+        appearance="segmented"
+      />
+      <Link
+        href={buildLiveUrl(orgSlug, projectSlug, {
+          timeRange: effectiveTimeRange,
+          environment,
+        })}
+        className="inline-flex min-h-11 w-full items-center justify-center rounded-md border border-border px-3 py-2 text-xs font-medium hover:bg-muted/60 sm:min-h-9 sm:w-auto"
+      >
+        Live
+      </Link>
+    </>
+  );
+
   return (
-    <div className="space-y-5 p-4">
-      <div className="flex flex-col gap-3 border-b border-border pb-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-lg font-semibold tracking-tight">Overview</h1>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            {headerContextLabel}
-            {lastUpdatedLabel && showData ? ` · updated ${lastUpdatedLabel}` : ""}
-          </p>
-        </div>
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-          <DashboardEnvironmentFilter className="sm:w-auto" />
-          <TimeframeSelector
-            timeRange={effectiveTimeRange}
-            onTimeRangeChange={handleTimeRangeChange}
-            presets={DASHBOARD_TIME_PRESETS}
-            variant="inline"
-            appearance="segmented"
-          />
-          <Link
-            href={buildLiveUrl(orgSlug, projectSlug, {
-              timeRange: effectiveTimeRange,
-              environment,
-            })}
-            className="inline-flex min-h-9 items-center justify-center rounded-md border border-border px-3 py-2 text-xs font-medium hover:bg-muted/60"
-          >
-            Live
-          </Link>
-        </div>
-      </div>
+    <div className="dashboard-page min-h-full bg-background p-4 sm:p-6">
+      <div className="space-y-5 sm:space-y-6">
+      <DashboardPageHeader
+        summary={statusSummary}
+        healthScore={healthScore}
+        activeAlertCount={activeAlerts.length}
+        contextLabel={headerContextLabel}
+        lastUpdatedLabel={showData ? lastUpdatedLabel : undefined}
+        orgSlug={orgSlug}
+        projectSlug={projectSlug}
+        isLoading={showLoading && !dashboardData}
+        controls={headerControls}
+      />
 
       {error && (
         <div
@@ -503,31 +555,28 @@ function DashboardPageInner({
       )}
       {showData && dashboardData && (
         <>
-          <DashboardStatusBanner
-            summary={statusSummary}
-            activeAlertCount={activeAlerts.length}
-            orgSlug={orgSlug}
-            projectSlug={projectSlug}
-            isLoading={alertsLoading && activeAlerts.length === 0}
-          />
-
-          <div className="grid grid-cols-12 gap-3">
-          <MetricCard
+          <div className="grid grid-cols-12 gap-3 sm:gap-4">
+          <MetricSparklineCard
             title="Requests"
             value={dashboardData.total_requests.toLocaleString()}
-            trend={requestTrend?.direction}
-            trendValue={requestTrend?.label}
-            invertTrendColors={requestTrend?.invertColors}
+            trend={requestTrend}
+            tier={requestVolumeTier(dashboardData.total_requests)}
+            sparklineData={sparklines.requests}
+            comparisonLabel={trendBaseline}
+            description={DASHBOARD_METRIC_HELP.requests}
             className="col-span-6 lg:col-span-3"
           />
           <div className="col-span-6 flex flex-col gap-2 lg:col-span-3">
-          <MetricCard
+          <MetricSparklineCard
             title="Error rate"
             value={`${dashboardData.error_rate.toFixed(2)}%`}
-            trend={errorTrend?.direction}
-            trendValue={errorTrend?.label}
-            invertTrendColors={errorTrend?.invertColors}
+            trend={errorTrend}
+            tier={errorRateTier(dashboardData.error_rate)}
+            sparklineData={sparklines.errorRate}
+            sparklineVariant="negative"
             tone={errorTone}
+            comparisonLabel={trendBaseline}
+            description={DASHBOARD_METRIC_HELP.errorRate}
             className="flex-1"
           />
           {showErrorRateNudge && (
@@ -538,21 +587,26 @@ function DashboardPageInner({
             />
           )}
           </div>
-          <MetricCard
+          <MetricSparklineCard
             title="P95 latency"
             value={dashboardData.p95_latency >= 1000 ? `${(dashboardData.p95_latency / 1000).toFixed(2)}s` : `${Math.round(dashboardData.p95_latency)}ms`}
-            trend={latencyTrend?.direction}
-            trendValue={latencyTrend?.label}
-            invertTrendColors={latencyTrend?.invertColors}
+            trend={latencyTrend}
+            tier={latencyTier(dashboardData.p95_latency)}
+            sparklineData={sparklines.latency}
             tone={latencyTone}
+            comparisonLabel={trendBaseline}
+            description={DASHBOARD_METRIC_HELP.p95Latency}
             className="col-span-6 lg:col-span-3"
           />
-          <MetricCard
+          <MetricSparklineCard
             title="Success rate"
             value={successRate}
-            trend={successTrend?.direction}
-            trendValue={successTrend?.label}
-            invertTrendColors={successTrend?.invertColors}
+            trend={successTrend}
+            tier={successRateTier(successRateValue)}
+            sparklineData={sparklines.successRate}
+            sparklineVariant="positive"
+            comparisonLabel={trendBaseline}
+            description={DASHBOARD_METRIC_HELP.successRate}
             className="col-span-6 lg:col-span-3"
           />
           </div>
@@ -563,8 +617,24 @@ function DashboardPageInner({
             projectSlug={projectSlug}
           />
 
-          <div className="grid grid-cols-12 gap-4">
-          {/* Trends */}
+          <div className="grid grid-cols-12 gap-3 sm:gap-4">
+          <HealthOverviewPanel
+            services={dashboardData.services}
+            statusCodes={dashboardData.status_codes}
+            className="col-span-12 lg:col-span-5"
+          />
+          <NeedsAttentionPanel
+            services={attentionServices}
+            endpoints={attentionEndpoints}
+            orgSlug={orgSlug}
+            projectSlug={projectSlug}
+            timeRange={effectiveTimeRange}
+            environment={environment}
+            className="col-span-12 lg:col-span-7"
+          />
+          </div>
+
+          <div className="grid grid-cols-12 gap-3 sm:gap-4">
           <ThroughputWidget
             data={dashboardData.requests_per_minute}
             timeRange={effectiveTimeRange}
@@ -594,19 +664,6 @@ function DashboardPageInner({
             className="col-span-12 lg:col-span-6"
           />
 
-          {(attentionServices.length > 0 || attentionEndpoints.length > 0) && (
-            <NeedsAttentionPanel
-              services={attentionServices}
-              endpoints={attentionEndpoints}
-              orgSlug={orgSlug}
-              projectSlug={projectSlug}
-              timeRange={effectiveTimeRange}
-              environment={environment}
-              className="col-span-12"
-            />
-          )}
-
-          {/* Drill-down lists */}
           <TopEndpointsWidget
             endpoints={endpointData}
             orgSlug={orgSlug}
@@ -628,6 +685,7 @@ function DashboardPageInner({
         </div>
         </>
       )}
+      </div>
     </div>
   );
 }

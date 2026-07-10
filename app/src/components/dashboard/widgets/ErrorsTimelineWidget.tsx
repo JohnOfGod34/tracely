@@ -24,6 +24,7 @@ import {
   formatCompactNumber,
   getBucketMsForTimeRange,
 } from "@/lib/dashboardChartAggregation";
+import { DASHBOARD_METRIC_HELP } from "@/lib/dashboardMetricHelp";
 
 interface ErrorsTimelineWidgetProps {
   data: DataPoint[];
@@ -88,6 +89,7 @@ function ErrorsTimelineWidgetInner({
   return (
     <DashboardPanel
       title="Errors"
+      description={DASHBOARD_METRIC_HELP.errorsTimeline}
       testId="errors-timeline-widget"
       className={className}
       action={

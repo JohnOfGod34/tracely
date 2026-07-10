@@ -7,6 +7,7 @@ import type { ServiceStatus } from "@/types/dashboard";
 import type { TimeRange, TimeRangePreset } from "@/types/span";
 import { buildLiveUrl } from "@/lib/liveLinks";
 import { DashboardPanel } from "@/components/dashboard/DashboardPanel";
+import { DASHBOARD_METRIC_HELP } from "@/lib/dashboardMetricHelp";
 import { DashboardWindowNudge } from "@/components/dashboard/DashboardWindowNudge";
 import { STATUS_DOT, errorRateTextClass, latencyTextClass } from "@/lib/statusStyles";
 
@@ -41,6 +42,7 @@ export function ServiceStatusWidget({
   return (
     <DashboardPanel
       title="Services"
+      description={DASHBOARD_METRIC_HELP.services}
       testId="service-status-widget"
       className={className}
       action={

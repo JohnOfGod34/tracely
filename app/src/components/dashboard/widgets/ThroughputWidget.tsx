@@ -21,6 +21,7 @@ import {
   formatCompactNumber,
   getBucketMsForTimeRange,
 } from "@/lib/dashboardChartAggregation";
+import { DASHBOARD_METRIC_HELP } from "@/lib/dashboardMetricHelp";
 
 interface ThroughputWidgetProps {
   data: DataPoint[];
@@ -44,6 +45,7 @@ function ThroughputWidgetInner({ data, timeRange, className }: ThroughputWidgetP
   return (
     <DashboardPanel
       title="Throughput"
+      description={DASHBOARD_METRIC_HELP.throughput}
       testId="throughput-widget"
       className={className}
       action={

@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import type { TimeRange, TimeRangePreset } from "@/types/span";
 import { buildLiveUrl } from "@/lib/liveLinks";
 import { DashboardPanel } from "@/components/dashboard/DashboardPanel";
+import { DASHBOARD_METRIC_HELP } from "@/lib/dashboardMetricHelp";
 import { DashboardWindowNudge } from "@/components/dashboard/DashboardWindowNudge";
 
 export interface EndpointStats {
@@ -77,7 +78,12 @@ export function TopEndpointsWidget({
   const maxCount = Math.max(...sortedEndpoints.map((e) => e.count), 1);
 
   return (
-    <DashboardPanel title="Endpoints" testId="top-endpoints-widget" className={className}>
+    <DashboardPanel
+      title="Endpoints"
+      description={DASHBOARD_METRIC_HELP.endpoints}
+      testId="top-endpoints-widget"
+      className={className}
+    >
       <div
         className="mb-3 inline-flex rounded-md border border-border p-0.5"
         role="tablist"

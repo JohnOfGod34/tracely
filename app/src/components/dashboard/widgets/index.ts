@@ -11,3 +11,4 @@ export type { EndpointStats } from "./TopEndpointsWidget";
 export { LatencyDistributionWidget } from "./LatencyDistributionWidget";
 export { ErrorsTimelineWidget } from "./ErrorsTimelineWidget";
 export { MetricCard } from "./MetricCard";
+export { MetricSparklineCard } from "./MetricSparklineCard";

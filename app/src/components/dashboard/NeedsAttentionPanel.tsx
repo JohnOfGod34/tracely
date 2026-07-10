@@ -8,6 +8,8 @@ import type { AttentionEndpoint } from "@/lib/projectHealthStatus";
 import type { TimeRange } from "@/types/span";
 import { buildLiveUrl } from "@/lib/liveLinks";
 import { endpointReactKey, resolveEndpointP95 } from "@/lib/endpointStats";
+import { DASHBOARD_METRIC_HELP } from "@/lib/dashboardMetricHelp";
+import { DashboardInfoTip } from "@/components/dashboard/DashboardInfoTip";
 import {
   STATUS_DOT,
   errorRateTextClass,
@@ -25,31 +27,16 @@ interface NeedsAttentionPanelProps {
 }
 
 function formatLatency(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return "—";
   if (ms < 1000) return `${Math.round(ms)}ms`;
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
-function MetricChip({
-  label,
-  value,
-  className,
-}: {
-  label: string;
-  value: string;
-  className?: string;
-}) {
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1 rounded-md bg-muted/60 px-1.5 py-0.5 text-[10px] tabular-nums",
-        className
-      )}
-    >
-      <span className="font-medium uppercase tracking-wide text-muted-foreground">{label}</span>
-      <span>{value}</span>
-    </span>
-  );
-}
+const ENDPOINT_ROW =
+  "grid min-h-11 grid-cols-[minmax(0,1fr)_auto_auto_auto] items-center gap-x-3 py-2.5 text-xs hover:opacity-80 sm:grid-cols-[minmax(0,1fr)_4rem_3.5rem_3.5rem_auto]";
+
+const SERVICE_ROW =
+  "grid min-h-11 grid-cols-[minmax(0,1fr)_3.5rem_3.5rem_auto] items-center gap-x-3 py-2.5 text-xs hover:opacity-80";
 
 export function NeedsAttentionPanel({
   services,
@@ -60,146 +47,148 @@ export function NeedsAttentionPanel({
   environment,
   className,
 }: NeedsAttentionPanelProps) {
-  if (services.length === 0 && endpoints.length === 0) return null;
-
-  const errorEndpoints = endpoints.filter((ep) => ep.kind === "error");
-  const slowEndpoints = endpoints.filter((ep) => ep.kind === "slow");
+  const hasRows = services.length > 0 || endpoints.length > 0;
 
   return (
     <section
-      className={cn("rounded-lg border border-border bg-card p-4", className)}
+      className={cn("dashboard-panel flex h-full flex-col p-4 sm:p-5", className)}
       data-testid="needs-attention-panel"
       aria-label="Needs attention"
     >
-      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+      <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
         <div>
-          <h2 className="text-sm font-medium text-foreground">Needs attention</h2>
+          <div className="flex items-center gap-1">
+            <h2 className="text-sm font-medium text-foreground">Needs attention</h2>
+            <DashboardInfoTip label="About needs attention">
+              {DASHBOARD_METRIC_HELP.needsAttention}
+            </DashboardInfoTip>
+          </div>
           <p className="mt-0.5 text-[11px] text-muted-foreground">
-            Worst endpoints by error rate or p95 latency — not a project average
+            Worst endpoints by error rate or p95 latency
           </p>
         </div>
-        <p className="text-[11px] text-muted-foreground">Open in Live to inspect</p>
+        <p className="text-[11px] text-muted-foreground">Click a row for Live</p>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        {services.length > 0 && (
-          <div>
-            <h3 className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-              Services
-            </h3>
-            <ul className="divide-y divide-border">
-              {services.map((service) => (
-                <li key={service.name}>
-                  <Link
-                    href={buildLiveUrl(orgSlug, projectSlug, {
-                      timeRange,
-                      service: service.name,
-                      environment,
-                      statusGroups: service.error_rate >= 1 ? ["4xx", "5xx"] : undefined,
-                    })}
-                    className="flex min-h-11 items-center justify-between gap-3 py-2.5 text-sm hover:opacity-80"
-                  >
-                    <span className="flex min-w-0 items-center gap-2">
-                      <span
-                        className={cn("size-1.5 shrink-0 rounded-full", STATUS_DOT[service.status])}
-                        aria-hidden
-                      />
-                      <span className="truncate font-medium">{service.name}</span>
-                    </span>
-                    <span className="flex shrink-0 items-center gap-1.5">
-                      <MetricChip
-                        label="err"
-                        value={`${service.error_rate.toFixed(1)}%`}
-                        className={errorRateTextClass(service.error_rate)}
-                      />
-                      <MetricChip
-                        label="p95"
-                        value={formatLatency(service.p95_latency)}
-                        className={latencyTextClass(service.p95_latency)}
-                      />
-                      <ChevronRight className="size-3 text-muted-foreground" aria-hidden />
-                    </span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        {endpoints.length > 0 && (
-          <div className={services.length > 0 ? "" : "lg:col-span-2"}>
-            <h3 className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-              Endpoints
-            </h3>
-
-            {errorEndpoints.length > 0 && (
+      {!hasRows ? (
+        <p className="flex flex-1 items-center text-sm text-muted-foreground">
+          No services or endpoints need attention in this window.
+        </p>
+      ) : (
+        <div className="flex-1 space-y-4">
+          {endpoints.length > 0 && (
+            <div>
+              <div className="mb-1 grid grid-cols-[minmax(0,1fr)_auto_auto_auto] gap-x-3 text-[10px] font-medium uppercase tracking-wide text-muted-foreground sm:grid-cols-[minmax(0,1fr)_4rem_3.5rem_3.5rem_auto]">
+                <span>Endpoint</span>
+                <span className="hidden sm:inline">Req</span>
+                <span>Err</span>
+                <span>P95</span>
+                <span className="sr-only">Open</span>
+              </div>
               <ul className="divide-y divide-border">
-                {errorEndpoints.map((ep) => (
+                {endpoints.map((ep) => (
                   <li key={endpointReactKey(ep.method, ep.route)}>
                     <Link
                       href={buildLiveUrl(orgSlug, projectSlug, {
                         timeRange,
                         search: ep.route || ep.method,
                         environment,
-                        statusGroups: ["4xx", "5xx"],
+                        statusGroups:
+                          ep.kind === "error" ? ["4xx", "5xx"] : undefined,
                       })}
-                      className="flex min-h-11 items-center justify-between gap-3 py-2.5 text-sm hover:opacity-80"
+                      className={ENDPOINT_ROW}
                     >
-                      <span className="min-w-0 truncate font-mono text-xs">
+                      <span className="truncate font-mono">
                         <span className="mr-1.5 text-muted-foreground">{ep.method}</span>
                         {ep.route || "/"}
                       </span>
-                      <span className="flex shrink-0 items-center gap-1.5">
-                        <MetricChip
-                          label="err"
-                          value={`${ep.error_rate.toFixed(1)}%`}
-                          className={errorRateTextClass(ep.error_rate)}
-                        />
-                        <ChevronRight className="size-3 text-muted-foreground" aria-hidden />
+                      <span className="hidden tabular-nums text-muted-foreground sm:inline">
+                        {ep.count.toLocaleString()}
                       </span>
+                      <span
+                        className={cn(
+                          "tabular-nums",
+                          ep.kind === "error"
+                            ? errorRateTextClass(ep.error_rate)
+                            : "text-muted-foreground"
+                        )}
+                      >
+                        {ep.error_rate.toFixed(1)}%
+                      </span>
+                      <span
+                        className={cn(
+                          "tabular-nums",
+                          ep.kind === "slow"
+                            ? latencyTextClass(resolveEndpointP95(ep))
+                            : "text-muted-foreground"
+                        )}
+                      >
+                        {formatLatency(resolveEndpointP95(ep))}
+                      </span>
+                      <ChevronRight className="size-3.5 text-muted-foreground" aria-hidden />
                     </Link>
                   </li>
                 ))}
               </ul>
-            )}
+            </div>
+          )}
 
-            {slowEndpoints.length > 0 && (
-              <ul
-                className={cn(
-                  "divide-y divide-border",
-                  errorEndpoints.length > 0 && "mt-2 border-t border-border pt-2"
-                )}
-              >
-                {slowEndpoints.map((ep) => (
-                  <li key={endpointReactKey(ep.method, ep.route)}>
+          {services.length > 0 && (
+            <div>
+              <div className="mb-1 grid grid-cols-[minmax(0,1fr)_3.5rem_3.5rem_auto] gap-x-3 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                <span>Service</span>
+                <span>Err</span>
+                <span>P95</span>
+                <span className="sr-only">Open</span>
+              </div>
+              <ul className="divide-y divide-border">
+                {services.map((service) => (
+                  <li key={service.name}>
                     <Link
                       href={buildLiveUrl(orgSlug, projectSlug, {
                         timeRange,
-                        search: ep.route || ep.method,
+                        service: service.name,
                         environment,
+                        statusGroups:
+                          service.error_rate >= 1 ? ["4xx", "5xx"] : undefined,
                       })}
-                      className="flex min-h-11 items-center justify-between gap-3 py-2.5 text-sm hover:opacity-80"
+                      className={SERVICE_ROW}
                     >
-                      <span className="min-w-0 truncate font-mono text-xs">
-                        <span className="mr-1.5 text-muted-foreground">{ep.method}</span>
-                        {ep.route || "/"}
-                      </span>
-                      <span className="flex shrink-0 items-center gap-1.5">
-                        <MetricChip
-                          label="p95"
-                          value={formatLatency(resolveEndpointP95(ep))}
-                          className={latencyTextClass(resolveEndpointP95(ep))}
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span
+                          className={cn(
+                            "size-1.5 shrink-0 rounded-full",
+                            STATUS_DOT[service.status]
+                          )}
+                          aria-hidden
                         />
-                        <ChevronRight className="size-3 text-muted-foreground" aria-hidden />
+                        <span className="truncate font-medium">{service.name}</span>
                       </span>
+                      <span
+                        className={cn(
+                          "tabular-nums",
+                          errorRateTextClass(service.error_rate)
+                        )}
+                      >
+                        {service.error_rate.toFixed(1)}%
+                      </span>
+                      <span
+                        className={cn(
+                          "tabular-nums",
+                          latencyTextClass(service.p95_latency)
+                        )}
+                      >
+                        {formatLatency(service.p95_latency)}
+                      </span>
+                      <ChevronRight className="size-3.5 text-muted-foreground" aria-hidden />
                     </Link>
                   </li>
                 ))}
               </ul>
-            )}
-          </div>
-        )}
-      </div>
+            </div>
+          )}
+        </div>
+      )}
     </section>
   );
 }

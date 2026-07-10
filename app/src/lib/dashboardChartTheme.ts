@@ -1,6 +1,6 @@
-/** Shared panel shell for dashboard widgets — flat border, no shadow. */
+/** Shared panel shell for dashboard widgets — elevated surface, flat border. */
 export const DASHBOARD_PANEL_CLASS =
-  "rounded-lg border border-border bg-card p-4 h-full";
+  "dashboard-panel rounded-xl border border-border bg-card p-4 h-full";
 
 /** Muted semantic fills for charts (OKLCH, works in light + dark via CSS vars). */
 export const STATUS_CODE_CHART_COLORS: Record<string, string> = {
