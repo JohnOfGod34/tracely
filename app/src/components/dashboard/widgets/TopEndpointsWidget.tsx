@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { ChevronRight } from "lucide-react";
-import { mergeDuplicateWidgetEndpoints, endpointReactKey } from "@/lib/endpointStats";
+import { mergeDuplicateWidgetEndpoints, endpointReactKey, formatEndpointLatency, resolveEndpointP95 } from "@/lib/endpointStats";
 import { cn } from "@/lib/utils";
 import type { TimeRange, TimeRangePreset } from "@/types/span";
 import { buildLiveUrl } from "@/lib/liveLinks";
@@ -15,6 +15,7 @@ export interface EndpointStats {
   method: string;
   count: number;
   avgLatency: number;
+  p95Latency: number;
   errorRate: number;
 }
 
@@ -41,7 +42,7 @@ function sortEndpoints(endpoints: EndpointStats[], mode: SortMode): EndpointStat
   if (mode === "errors") {
     sorted.sort((a, b) => b.errorRate - a.errorRate || b.count - a.count);
   } else if (mode === "latency") {
-    sorted.sort((a, b) => b.avgLatency - a.avgLatency || b.count - a.count);
+    sorted.sort((a, b) => b.p95Latency - a.p95Latency || b.count - a.count);
   } else {
     sorted.sort((a, b) => b.count - a.count);
   }
@@ -61,7 +62,15 @@ export function TopEndpointsWidget({
   const drillDown = !!(orgSlug && projectSlug && timeRange);
 
   const sortedEndpoints = useMemo(() => {
-    const deduped = mergeDuplicateWidgetEndpoints(endpoints);
+    const deduped = mergeDuplicateWidgetEndpoints(
+      endpoints.map((ep) => ({
+        ...ep,
+        p95Latency: resolveEndpointP95({
+          p95_latency: ep.p95Latency,
+          avg_latency: ep.avgLatency,
+        }),
+      }))
+    );
     return sortEndpoints(deduped, sortMode);
   }, [endpoints, sortMode]);
 
@@ -178,11 +187,7 @@ function EndpointRow({
           </span>
         )}
         {sortMode === "latency" && (
-          <span>
-            {endpoint.avgLatency >= 1000
-              ? `${(endpoint.avgLatency / 1000).toFixed(1)}s`
-              : `${Math.round(endpoint.avgLatency)}ms`}
-          </span>
+          <span>{formatEndpointLatency(endpoint.p95Latency)}</span>
         )}
         {showChevron && <ChevronRight className="size-3" aria-hidden />}
       </span>

@@ -110,6 +110,7 @@ def _merge_endpoint_stats(rows: list[EndpointStats]) -> list[EndpointStats]:
             )
             if total
             else 0.0,
+            p95_latency=round(max(prev.p95_latency, ep.p95_latency), 2),
             error_rate=round(
                 (prev.error_rate * prev.count + ep.error_rate * ep.count) / total, 2
             )
@@ -727,6 +728,7 @@ async def get_dashboard_metrics(
                 http_method,
                 count() AS cnt,
                 avg(duration_ms) AS avg_ms,
+                quantile(0.95)(duration_ms) AS p95_ms,
                 countIf(is_error) / count() * 100 AS err_rate
             FROM (
                 SELECT
@@ -753,13 +755,14 @@ async def get_dashboard_metrics(
             endpoints_result = await ch_query(endpoints_query, parameters=params)
 
             for row in endpoints_result.result_rows:
-                route, method, count, avg_ms, err_rate = row
+                route, method, count, avg_ms, p95_ms, err_rate = row
                 top_endpoints.append(
                     EndpointStats(
                         route=_normalize_http_route(route or "/"),
                         method=_normalize_http_method(method),
                         count=int(count),
                         avg_latency=round(avg_ms or 0.0, 2),
+                        p95_latency=round(p95_ms or 0.0, 2),
                         error_rate=round(err_rate or 0.0, 2),
                     )
                 )

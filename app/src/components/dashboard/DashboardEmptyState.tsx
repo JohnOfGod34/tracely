@@ -6,8 +6,10 @@ import { Activity, Radio } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { buildLiveUrl } from "@/lib/liveLinks";
 import type { DataEnvelope } from "@/types/api";
-import type { TimeRange } from "@/types/span";
+import type { TimeRange, TimeRangePreset } from "@/types/span";
 import { SdkSetupPanel } from "@/components/onboarding/SdkSetupPanel";
+import { DashboardWindowNudge } from "@/components/dashboard/DashboardWindowNudge";
+import { getWiderDashboardPreset } from "@/lib/dashboardTimeNudges";
 
 interface ApiKeyItem {
   id: string;
@@ -20,6 +22,7 @@ interface DashboardEmptyStateProps {
   timeRangeLabel: string;
   timeRange: TimeRange;
   environment?: string | null;
+  onExpandWindow?: (preset: TimeRangePreset) => void;
 }
 
 export function DashboardEmptyState({
@@ -28,6 +31,7 @@ export function DashboardEmptyState({
   timeRangeLabel,
   timeRange,
   environment,
+  onExpandWindow,
 }: DashboardEmptyStateProps) {
   const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
   const initRef = useRef(false);
@@ -58,25 +62,51 @@ export function DashboardEmptyState({
   }
 
   if (hasApiKey) {
+    const widerPreset = getWiderDashboardPreset(timeRange);
+    const canSuggestWindow = widerPreset && onExpandWindow;
+
     return (
       <div className="flex flex-col items-center gap-6 py-12 text-center">
         <Activity className="size-10 text-muted-foreground/50" aria-hidden />
-        <div>
-          <p className="text-base font-medium text-foreground">No activity in this period</p>
-          <p className="mt-1 max-w-md text-sm text-muted-foreground">
-            No requests were recorded for {timeRangeLabel.toLowerCase()}. Open the live stream
-            for real-time events or try a wider window.
-          </p>
+        <div className="max-w-md space-y-3">
+          {canSuggestWindow ? (
+            <DashboardWindowNudge
+              subject="activity"
+              timeRange={timeRange}
+              onExpandWindow={onExpandWindow}
+              className="text-sm leading-relaxed"
+            />
+          ) : (
+            <>
+              <p className="text-base font-medium text-foreground">Missing activity?</p>
+              <p className="text-sm text-muted-foreground">
+                Nothing was recorded for {timeRangeLabel.toLowerCase()}.
+                {timeRange.preset === "custom" && onExpandWindow ? (
+                  <>
+                    {" "}
+                    <button
+                      type="button"
+                      onClick={() => onExpandWindow("24h")}
+                      className="font-medium text-primary underline-offset-2 hover:underline"
+                    >
+                      Try the last 24 hours
+                    </button>{" "}
+                    or pick another range above.
+                  </>
+                ) : (
+                  " Try a different time range above or open the live stream."
+                )}
+              </p>
+            </>
+          )}
         </div>
-        <div className="flex flex-col gap-2 sm:flex-row">
-          <Link
-            href={buildLiveUrl(orgSlug, projectSlug, { timeRange, environment })}
-            className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
-          >
-            <Radio className="size-4" aria-hidden />
-            Open live stream
-          </Link>
-        </div>
+        <Link
+          href={buildLiveUrl(orgSlug, projectSlug, { timeRange, environment })}
+          className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted/60"
+        >
+          <Radio className="size-4" aria-hidden />
+          Open live stream
+        </Link>
       </div>
     );
   }

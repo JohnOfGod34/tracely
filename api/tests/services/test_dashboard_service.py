@@ -27,14 +27,15 @@ def test_normalize_http_method_defaults_to_get():
 
 def test_merge_endpoint_stats_combines_duplicates():
     rows = [
-        EndpointStats(route="/docs", method="GET", count=10, avg_latency=100.0, error_rate=1.0),
-        EndpointStats(route="/docs/", method="GET", count=5, avg_latency=200.0, error_rate=3.0),
+        EndpointStats(route="/docs", method="GET", count=10, avg_latency=100.0, p95_latency=150.0, error_rate=1.0),
+        EndpointStats(route="/docs/", method="GET", count=5, avg_latency=200.0, p95_latency=250.0, error_rate=3.0),
     ]
     merged = _merge_endpoint_stats(rows)
     assert len(merged) == 1
     assert merged[0].route == "/docs"
     assert merged[0].count == 15
     assert merged[0].avg_latency == 133.33
+    assert merged[0].p95_latency == 250.0
     assert merged[0].error_rate == 1.67
 
 

@@ -21,6 +21,7 @@ export interface EndpointStats {
   method: string;
   count: number;
   avg_latency: number;
+  p95_latency: number;
   error_rate: number;
 }
 

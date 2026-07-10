@@ -1,5 +1,24 @@
 import type { EndpointStats } from "@/types/dashboard";
 
+/** P95 per endpoint — falls back to avg when API/cache omits the field. */
+export function resolveEndpointP95(ep: {
+  p95_latency?: number | null;
+  avg_latency?: number | null;
+}): number {
+  const p95 = Number(ep.p95_latency);
+  if (Number.isFinite(p95) && p95 >= 0) return p95;
+  const avg = Number(ep.avg_latency);
+  if (Number.isFinite(avg) && avg >= 0) return avg;
+  return 0;
+}
+
+/** Format endpoint latency for display; never renders NaN. */
+export function formatEndpointLatency(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return "—";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
 /** Canonical path for dedup: trim, leading slash, no trailing slash (except root). */
 export function normalizeRoute(route: string): string {
   let r = (route || "/").trim();
@@ -39,6 +58,10 @@ function mergeEndpointRow<T extends EndpointStats>(
       count > 0
         ? (prev.avg_latency * prev.count + ep.avg_latency * ep.count) / count
         : 0,
+    p95_latency: Math.max(
+      resolveEndpointP95(prev),
+      resolveEndpointP95(ep)
+    ),
     error_rate:
       count > 0
         ? (prev.error_rate * prev.count + ep.error_rate * ep.count) / count
@@ -76,7 +99,16 @@ export interface WidgetEndpointStats {
   method: string;
   count: number;
   avgLatency: number;
+  p95Latency: number;
   errorRate: number;
+}
+
+function resolveWidgetP95(ep: WidgetEndpointStats): number {
+  const p95 = Number(ep.p95Latency);
+  if (Number.isFinite(p95) && p95 >= 0) return p95;
+  const avg = Number(ep.avgLatency);
+  if (Number.isFinite(avg) && avg >= 0) return avg;
+  return 0;
 }
 
 function mergeWidgetRow(
@@ -94,6 +126,7 @@ function mergeWidgetRow(
       count > 0
         ? (prev.avgLatency * prev.count + ep.avgLatency * ep.count) / count
         : 0,
+    p95Latency: Math.max(resolveWidgetP95(prev), resolveWidgetP95(ep)),
     errorRate:
       count > 0
         ? (prev.errorRate * prev.count + ep.errorRate * ep.count) / count

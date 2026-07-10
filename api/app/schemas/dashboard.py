@@ -75,6 +75,7 @@ class EndpointStats(BaseModel):
     method: str = Field(..., description="HTTP method (GET, POST, etc.)")
     count: int = Field(0, description="Total request count")
     avg_latency: float = Field(0.0, description="Average latency in ms")
+    p95_latency: float = Field(0.0, description="P95 latency in ms")
     error_rate: float = Field(0.0, description="Error rate percentage")
 
 

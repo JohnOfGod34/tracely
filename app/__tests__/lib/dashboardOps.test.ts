@@ -97,10 +97,23 @@ describe("projectHealthStatus", () => {
 
   it("sorts attention endpoints by error rate", () => {
     const endpoints: EndpointStats[] = [
-      { route: "/a", method: "GET", count: 100, avg_latency: 10, error_rate: 1 },
-      { route: "/b", method: "POST", count: 10, avg_latency: 10, error_rate: 15 },
+      { route: "/a", method: "GET", count: 100, avg_latency: 10, p95_latency: 20, error_rate: 1 },
+      { route: "/b", method: "POST", count: 10, avg_latency: 10, p95_latency: 30, error_rate: 15 },
     ];
-    expect(getAttentionEndpoints(endpoints).map((e) => e.route)).toEqual(["/b", "/a"]);
+    const result = getAttentionEndpoints(endpoints);
+    expect(result.map((e) => e.route)).toEqual(["/b", "/a"]);
+    expect(result.every((e) => e.kind === "error")).toBe(true);
+  });
+
+  it("includes slow endpoints when error rate is low", () => {
+    const endpoints: EndpointStats[] = [
+      { route: "/slow", method: "POST", count: 50, avg_latency: 200, p95_latency: 800, error_rate: 0 },
+      { route: "/ok", method: "GET", count: 100, avg_latency: 40, p95_latency: 80, error_rate: 0 },
+    ];
+    const result = getAttentionEndpoints(endpoints);
+    expect(result).toHaveLength(1);
+    expect(result[0].route).toBe("/slow");
+    expect(result[0].kind).toBe("slow");
   });
 
   it("filters healthy services from attention list", () => {

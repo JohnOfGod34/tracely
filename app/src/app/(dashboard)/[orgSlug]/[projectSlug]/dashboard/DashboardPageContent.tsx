@@ -20,7 +20,7 @@ import {
   DASHBOARD_DEFAULT_PRESET,
 } from "@/lib/liveLinks";
 import { DashboardEmptyState } from "@/components/dashboard/DashboardEmptyState";
-import { mergeDuplicateEndpoints } from "@/lib/endpointStats";
+import { mergeDuplicateEndpoints, resolveEndpointP95 } from "@/lib/endpointStats";
 import {
   getAttentionEndpoints,
   getAttentionServices,
@@ -345,6 +345,7 @@ function DashboardPageInner({
         method: ep.method,
         count: ep.count,
         avgLatency: ep.avg_latency,
+        p95Latency: resolveEndpointP95(ep),
         errorRate: ep.error_rate,
       })),
     [mergedTopEndpoints]
@@ -497,6 +498,7 @@ function DashboardPageInner({
           timeRangeLabel={timeRangeLabel}
           timeRange={effectiveTimeRange}
           environment={environment}
+          onExpandWindow={handleExpandWindow}
         />
       )}
       {showData && dashboardData && (
@@ -561,17 +563,8 @@ function DashboardPageInner({
             projectSlug={projectSlug}
           />
 
-          <NeedsAttentionPanel
-            services={attentionServices}
-            endpoints={attentionEndpoints}
-            orgSlug={orgSlug}
-            projectSlug={projectSlug}
-            timeRange={effectiveTimeRange}
-            environment={environment}
-          />
-
           <div className="grid grid-cols-12 gap-4">
-          {/* Row 2: Main charts */}
+          {/* Trends */}
           <ThroughputWidget
             data={dashboardData.requests_per_minute}
             timeRange={effectiveTimeRange}
@@ -582,7 +575,6 @@ function DashboardPageInner({
             className="col-span-12 sm:col-span-6 lg:col-span-4"
           />
 
-          {/* Row 3: Secondary charts */}
           <ErrorsTimelineWidget
             data={dashboardData.errors_per_minute}
             timeRange={effectiveTimeRange}
@@ -602,7 +594,19 @@ function DashboardPageInner({
             className="col-span-12 lg:col-span-6"
           />
 
-          {/* Row 4: Lists and service status */}
+          {(attentionServices.length > 0 || attentionEndpoints.length > 0) && (
+            <NeedsAttentionPanel
+              services={attentionServices}
+              endpoints={attentionEndpoints}
+              orgSlug={orgSlug}
+              projectSlug={projectSlug}
+              timeRange={effectiveTimeRange}
+              environment={environment}
+              className="col-span-12"
+            />
+          )}
+
+          {/* Drill-down lists */}
           <TopEndpointsWidget
             endpoints={endpointData}
             orgSlug={orgSlug}

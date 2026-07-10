@@ -1,5 +1,18 @@
 import type { EndpointStats, ServiceStatus } from "@/types/dashboard";
 import type { HealthStatus } from "@/types/health";
+import { endpointIdentity, resolveEndpointP95 } from "@/lib/endpointStats";
+
+/** Minimum error rate to surface an endpoint in Needs attention. */
+export const ATTENTION_ERROR_RATE_MIN = 0.5;
+
+/** Average latency at or above this threshold marks an endpoint as slow. */
+export const ATTENTION_SLOW_LATENCY_MS = 500;
+
+export type AttentionKind = "error" | "slow";
+
+export interface AttentionEndpoint extends EndpointStats {
+  kind: AttentionKind;
+}
 
 export interface ProjectStatusSummary {
   worst: HealthStatus | null;
@@ -34,18 +47,40 @@ export function getAttentionServices(services: ServiceStatus[]): ServiceStatus[]
     .sort((a, b) => rank[a.status] - rank[b.status] || b.error_rate - a.error_rate);
 }
 
-/** Endpoints with failures, sorted by error rate then volume. */
+/** Endpoints failing or running slow — deduped, errors prioritized. */
 export function getAttentionEndpoints(
   endpoints: EndpointStats[],
   limit = 5
-): EndpointStats[] {
-  return [...endpoints]
-    .filter((ep) => ep.error_rate > 0)
+): AttentionEndpoint[] {
+  const errors: AttentionEndpoint[] = [...endpoints]
+    .filter((ep) => ep.error_rate >= ATTENTION_ERROR_RATE_MIN)
     .sort(
       (a, b) =>
         b.error_rate - a.error_rate || b.count - a.count
     )
-    .slice(0, limit);
+    .map((ep) => ({ ...ep, kind: "error" as const }));
+
+  const errorKeys = new Set(
+    errors.map((ep) => endpointIdentity(ep.method, ep.route))
+  );
+
+  const slow: AttentionEndpoint[] = [...endpoints]
+    .filter(
+      (ep) =>
+        ep.error_rate < ATTENTION_ERROR_RATE_MIN &&
+        resolveEndpointP95(ep) >= ATTENTION_SLOW_LATENCY_MS
+    )
+    .filter((ep) => !errorKeys.has(endpointIdentity(ep.method, ep.route)))
+    .sort(
+      (a, b) =>
+        resolveEndpointP95(b) - resolveEndpointP95(a) || b.count - a.count
+    )
+    .map((ep) => ({ ...ep, kind: "slow" as const }));
+
+  const errorSlots = Math.min(errors.length, limit);
+  const slowSlots = Math.min(slow.length, Math.max(0, limit - errorSlots));
+
+  return [...errors.slice(0, errorSlots), ...slow.slice(0, slowSlots)];
 }
 
 export function formatRelativeTime(iso: string): string {
