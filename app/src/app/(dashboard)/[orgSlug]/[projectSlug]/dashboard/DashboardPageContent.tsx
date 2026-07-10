@@ -485,13 +485,18 @@ function DashboardPageInner({
     const errors = dashboardData?.errors_per_minute ?? [];
     const p95 = dashboardData?.p95_latency ?? 0;
     return {
-      requests: requestsSparkline(requests),
-      errors: errorsSparkline(errors),
-      errorRate: errorRateSparkline(requests, errors),
-      successRate: successRateSparkline(requests, errors),
+      requests: requestsSparkline(requests, effectiveTimeRange),
+      errors: errorsSparkline(errors, effectiveTimeRange),
+      errorRate: errorRateSparkline(requests, errors, effectiveTimeRange),
+      successRate: successRateSparkline(requests, errors, effectiveTimeRange),
       latency: flatSparkline(p95),
     };
-  }, [dashboardData?.requests_per_minute, dashboardData?.errors_per_minute, dashboardData?.p95_latency]);
+  }, [
+    dashboardData?.requests_per_minute,
+    dashboardData?.errors_per_minute,
+    dashboardData?.p95_latency,
+    effectiveTimeRange,
+  ]);
 
   const trendBaseline = formatTrendBaselineLabel(effectiveTimeRange);
 
