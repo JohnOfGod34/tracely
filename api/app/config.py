@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     clickhouse_url: str = "http://localhost:8123"
     redis_url: str = "redis://localhost:6379/0"
     jwt_secret: str = "change-me-in-production"
-    cors_origins: list[str] = ["http://localhost:3000"]
+    cors_origins: list[str] = ["http://localhost:3000", "http://localhost:3010"]
     resend_api_key: str = ""
     resend_from_email: str = "noreply@tracely.sh"
     frontend_url: str = "http://localhost:3000"

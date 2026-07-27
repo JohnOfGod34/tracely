@@ -338,7 +338,7 @@ const LiveHeader = memo(function LiveHeader({
   return (
     <div className="sticky top-0 z-10 flex h-10 items-center gap-2 border-b bg-background/95 px-4 backdrop-blur-sm">
       {/* Search input (AC1) */}
-      <div className="hidden md:block">
+      <div className="hidden md:block shrink-0">
         <div className="relative">
           <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <input
@@ -402,7 +402,7 @@ const LiveHeader = memo(function LiveHeader({
       )}
 
       {/* Time preset select (moved to left side) */}
-      <div className="relative" data-testid="header-time-range">
+      <div className="relative shrink-0" data-testid="header-time-range">
         <select
           value={filters.timeRange.preset}
           onChange={(e) => onTimePreset(e.target.value as TimeRangePreset)}
@@ -436,8 +436,10 @@ const LiveHeader = memo(function LiveHeader({
         </div>
       )}
 
-      {/* Status code filters — 4xx and 5xx toggle independently (AC1) */}
-      <div className="flex items-center gap-1">
+      {/* Status code filters — 4xx and 5xx toggle independently (AC1). Hidden
+          below sm: at phone widths there isn't room next to the connection
+          status without overflowing the row. */}
+      <div className="hidden shrink-0 items-center gap-1 sm:flex">
         <AlertTriangle className="size-3.5 text-muted-foreground" />
         <button
           type="button"
@@ -494,9 +496,11 @@ const LiveHeader = memo(function LiveHeader({
         </div>
       )}
 
-      {/* Compact metrics fallback — error rate + p95 only, below lg (UX10) */}
+      {/* Compact metrics fallback — error rate + p95 only, sm through lg (UX10).
+          Hidden below sm along with the status filters to keep the phone
+          baseline down to search / time-range / connection status. */}
       {aggregatedMetrics && !healthLoading && (
-        <div className="flex lg:hidden items-center gap-1 text-xs" data-testid="header-metrics-compact">
+        <div className="hidden sm:flex lg:hidden shrink-0 items-center gap-1 text-xs" data-testid="header-metrics-compact">
           <span className={cn("font-medium tabular-nums", errorRateColorClass(aggregatedMetrics.avgErrorRate))}>
             {aggregatedMetrics.avgErrorRate.toFixed(1)}%
           </span>
@@ -507,10 +511,10 @@ const LiveHeader = memo(function LiveHeader({
         </div>
       )}
 
-      <div className="mx-1 h-4 w-px bg-border" />
+      <div className="mx-1 h-4 w-px shrink-0 bg-border" />
 
       {/* Connection status */}
-      <div className="flex items-center gap-1.5">
+      <div className="flex shrink-0 items-center gap-1.5">
         {isHistorical ? (
           <>
             <Clock className="size-3.5 text-muted-foreground" />
@@ -540,8 +544,9 @@ const LiveHeader = memo(function LiveHeader({
         )}
       </div>
 
-      {/* Request count */}
-      <span className="text-xs text-muted-foreground tabular-nums" data-testid="header-span-count">
+      {/* Request count — hidden below sm; connection status already conveys
+          activity at phone widths and there's no room left in the row. */}
+      <span className="hidden sm:inline text-xs text-muted-foreground tabular-nums shrink-0" data-testid="header-span-count">
         {spanCount > 0 && `${spanCount.toLocaleString()} requests`}
       </span>
     </div>
@@ -573,7 +578,7 @@ export default function LivePageClient({
   return (
     <Suspense
       fallback={
-        <div className="flex flex-col" style={{ height: "calc(100vh - 48px)" }}>
+        <div className="flex flex-col" style={{ height: "calc(100dvh - 48px)" }}>
           <div className="sticky top-0 z-10 flex h-10 items-center gap-2 border-b bg-background/95 px-4 backdrop-blur-sm">
             <div className="flex-1" />
             <span className="text-xs text-muted-foreground">Loading...</span>
@@ -1223,7 +1228,7 @@ function LivePageInner({
   );
 
   return (
-    <div className="flex flex-col" style={{ height: "calc(100vh - 48px)" }}>
+    <div className="flex flex-col" style={{ height: "calc(100dvh - 48px)" }}>
       <EnvironmentSync />
       {/* Screen reader live region for new span announcements (AC6, UX11) */}
       <div className="sr-only" aria-live="polite" aria-atomic="true">

@@ -6,7 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
-  type MouseEvent,
+  type PointerEvent,
 } from "react";
 import { formatBucketTimestamp, type TimeBucket } from "@/lib/timelineUtils";
 import { cn } from "@/lib/utils";
@@ -110,9 +110,13 @@ export function TimelineHistogram({
     [chartWidth, rangeStart, rangeEnd]
   );
 
-  const handleMouseDown = useCallback(
-    (e: MouseEvent<HTMLDivElement>) => {
+  // Pointer events (not mouse events) so drag-to-select works with touch and
+  // pen input, not just a mouse — this is the only way to set a custom range
+  // from the chart on mobile.
+  const handlePointerDown = useCallback(
+    (e: PointerEvent<HTMLDivElement>) => {
       if (!onRangeSelect) return;
+      e.currentTarget.setPointerCapture(e.pointerId);
       const ts = clientXToTimestamp(e.clientX);
       setDragStart(ts);
       setDragEnd(ts);
@@ -120,8 +124,8 @@ export function TimelineHistogram({
     [onRangeSelect, clientXToTimestamp]
   );
 
-  const handleMouseMove = useCallback(
-    (e: MouseEvent<HTMLDivElement>) => {
+  const handlePointerMove = useCallback(
+    (e: PointerEvent<HTMLDivElement>) => {
       const rect = containerRef.current?.getBoundingClientRect();
       if (!rect || chartWidth <= 0) return;
 
@@ -154,11 +158,15 @@ export function TimelineHistogram({
     setDragEnd(null);
   }, [dragStart, dragEnd, granularity, onRangeSelect]);
 
-  const handleMouseLeave = useCallback(() => {
+  const handlePointerLeave = useCallback(() => {
     setHoveredIndex(null);
-    setDragStart(null);
-    setDragEnd(null);
-  }, []);
+    // Pointer capture (touch/pen drags) keeps events targeted at this element
+    // even once the pointer leaves it, so a real drag is still resolved by
+    // commitDrag on pointerup/cancel rather than being abandoned here.
+    if (dragStart === null) {
+      setDragEnd(null);
+    }
+  }, [dragStart]);
 
   if (buckets.length === 0) {
     return (
@@ -182,10 +190,12 @@ export function TimelineHistogram({
     <div
       ref={containerRef}
       className={cn("relative h-full w-full select-none", onRangeSelect && "cursor-crosshair")}
-      onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
-      onMouseUp={commitDrag}
-      onMouseLeave={handleMouseLeave}
+      style={{ touchAction: onRangeSelect ? "none" : undefined }}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={commitDrag}
+      onPointerCancel={commitDrag}
+      onPointerLeave={handlePointerLeave}
     >
       {size.width > 0 && size.height > 0 && (
         <svg
