@@ -186,6 +186,15 @@ function DashboardPageInner({
 
   const timeRange = storeTimeRange;
 
+  // Captured once, lazily, instead of calling Date.now() directly during
+  // render (react-hooks/purity forbids impure calls in the render body).
+  const [hydratedAt] = useState(() => Date.now());
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNowTick(Date.now()), 5000);
+    return () => clearInterval(id);
+  }, []);
+
   // Hydrate filter store from URL before paint (avoids a 15m query when URL says 24h)
   const hydratedRef = useRef(false);
   useLayoutEffect(() => {
@@ -311,7 +320,7 @@ function DashboardPageInner({
     enabled: !!projectId,
     initialData: useSsrInitialData && initialMetrics ? initialMetrics : undefined,
     initialDataUpdatedAt:
-      useSsrInitialData && initialMetrics ? Date.now() : undefined,
+      useSsrInitialData && initialMetrics ? hydratedAt : undefined,
     placeholderData: keepPreviousData,
     refetchInterval: queryTimeRange.preset !== "custom" ? 10000 : false,
     staleTime: 8000,
@@ -401,11 +410,11 @@ function DashboardPageInner({
 
   const lastUpdatedLabel = useMemo(() => {
     if (!dataUpdatedAt) return undefined;
-    const secs = Math.max(0, Math.floor((Date.now() - dataUpdatedAt) / 1000));
+    const secs = Math.max(0, Math.floor((nowTick - dataUpdatedAt) / 1000));
     if (secs < 10) return "just now";
     if (secs < 60) return `${secs}s ago`;
     return `${Math.floor(secs / 60)}m ago`;
-  }, [dataUpdatedAt, isFetching]);
+  }, [dataUpdatedAt, nowTick]);
 
   const previous = dashboardData?.previous_period ?? undefined;
 

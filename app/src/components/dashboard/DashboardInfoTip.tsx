@@ -1,12 +1,25 @@
 "use client";
 
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { CircleHelp } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const TIP_MAX_WIDTH = 280;
 const VIEWPORT_PAD = 12;
+
+function subscribeNever() {
+  return () => {};
+}
+
+/** True once mounted on the client — avoids portaling during SSR without an effect+setState. */
+function useIsMounted(): boolean {
+  return useSyncExternalStore(
+    subscribeNever,
+    () => true,
+    () => false
+  );
+}
 
 interface DashboardInfoTipProps {
   label: string;
@@ -26,7 +39,7 @@ function clampTooltipPosition(trigger: DOMRect): { top: number; left: number; wi
 
 export function DashboardInfoTip({ label, children, className }: DashboardInfoTipProps) {
   const [open, setOpen] = useState(false);
-  const [mounted, setMounted] = useState(false);
+  const mounted = useIsMounted();
   const [position, setPosition] = useState<{ top: number; left: number; width: number } | null>(
     null
   );
@@ -34,10 +47,12 @@ export function DashboardInfoTip({ label, children, className }: DashboardInfoTi
   const tipRef = useRef<HTMLSpanElement>(null);
   const tipId = useId();
 
-  useEffect(() => setMounted(true), []);
-
   useLayoutEffect(() => {
     if (!open || !rootRef.current) {
+      // Resets the DOM-measured position when closed; the rest of this
+      // effect measures rootRef/tipRef (legitimate DOM sync the linter
+      // can't see past this guard clause).
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setPosition(null);
       return;
     }
