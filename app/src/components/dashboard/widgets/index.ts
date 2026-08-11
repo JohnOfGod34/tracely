@@ -8,7 +8,6 @@ export { StatusCodeWidget } from "./StatusCodeWidget";
 export type { StatusCodeData } from "./StatusCodeWidget";
 export { TopEndpointsWidget } from "./TopEndpointsWidget";
 export type { EndpointStats } from "./TopEndpointsWidget";
-export { WatchedEndpointsWidget } from "./WatchedEndpointsWidget";
 export { LatencyDistributionWidget } from "./LatencyDistributionWidget";
 export { ErrorsTimelineWidget } from "./ErrorsTimelineWidget";
 export { MetricCard } from "./MetricCard";

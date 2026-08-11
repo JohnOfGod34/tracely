@@ -24,6 +24,4 @@ export const DASHBOARD_METRIC_HELP = {
     "Top routes by volume, error rate, or p95 latency. Click a row to filter Live.",
   services:
     "Per-service error rate and p95 latency with health status. Click a row to filter Live.",
-  watchedEndpoints:
-    "Endpoints you're tracking specifically — total requests and error rate for the selected window, even if they don't rank in the top 10 by volume. Saved locally to this browser.",
 } as const;

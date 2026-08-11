@@ -113,39 +113,3 @@ async def get_dashboard_metrics(
     )
 
     return success(metrics.model_dump(mode="json"))
-
-
-@router.get("/dashboard/endpoint-stats")
-async def get_endpoint_stats(
-    org_slug: str = Path(...),
-    project_slug: str = Path(...),
-    method: str = Query(..., description="HTTP method, e.g. GET"),
-    route: str = Query(..., description="HTTP route, e.g. /v3/jobseekers"),
-    time: str = Query("15m", description="Time preset: 5m, 15m, 1h, 6h, 24h, or custom"),
-    start: datetime | None = Query(None, description="Custom range start (ISO 8601)"),
-    end: datetime | None = Query(None, description="Custom range end (ISO 8601)"),
-    env: str | None = Query(None, description="Filter by deployment environment"),
-    org_id=Depends(get_current_org),
-    db: AsyncSession = Depends(get_db),
-) -> dict:
-    """Get total request count and error rate for a single, user-picked endpoint.
-
-    Not limited to the dashboard's top-10 endpoints — lets users track a
-    specific low-traffic route (e.g. GET /v3/jobseekers) directly.
-
-    Multi-tenant isolation enforced via org_id scoping.
-    """
-    project = await project_service.get_project_by_slug(db, org_id, project_slug)
-
-    stats = await dashboard_service.get_endpoint_stats(
-        org_id,
-        project.id,
-        method=method,
-        route=route,
-        preset=time,
-        start=start,
-        end=end,
-        environment=env,
-    )
-
-    return success(stats.model_dump(mode="json"))
