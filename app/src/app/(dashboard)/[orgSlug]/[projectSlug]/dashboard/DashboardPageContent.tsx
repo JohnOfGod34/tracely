@@ -58,6 +58,7 @@ import {
   ServiceStatusWidget,
   WidgetSkeleton,
   TopEndpointsWidget,
+  WatchedEndpointsWidget,
   MetricSparklineCard,
 } from "@/components/dashboard/widgets";
 
@@ -684,6 +685,14 @@ function DashboardPageInner({
             environment={environment}
             onExpandWindow={handleExpandWindow}
             className="col-span-12 lg:col-span-5"
+          />
+          <WatchedEndpointsWidget
+            projectId={projectId ?? undefined}
+            orgSlug={orgSlug}
+            projectSlug={projectSlug}
+            timeRange={effectiveTimeRange}
+            environment={environment}
+            className="col-span-12"
           />
         </div>
         </>

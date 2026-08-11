@@ -559,6 +559,77 @@ async def _fetch_period_summary(
     )
 
 
+async def get_endpoint_stats(
+    org_id: UUID,
+    project_id: UUID,
+    method: str,
+    route: str,
+    preset: str = "15m",
+    start: datetime | None = None,
+    end: datetime | None = None,
+    environment: str | None = None,
+) -> EndpointStats:
+    """Get total request count and error rate for a single, user-picked endpoint.
+
+    Unlike the top-endpoints query (Query 4 in get_dashboard_metrics), this is
+    not limited to the top 10 by volume — it filters directly on the
+    normalized method/route so low-traffic endpoints can be tracked too.
+    """
+    method_norm = _normalize_http_method(method)
+    route_norm = _normalize_http_route(route)
+
+    params: dict = {
+        "org_id": str(org_id),
+        "project_id": str(project_id),
+        "method": method_norm,
+        "route": route_norm,
+    }
+    time_filter = _apply_time_filter(preset, start, end, params)
+    env_sql = _env_clause(environment)
+    resolved_method_sql = _RAW_HTTP_METHOD_SQL
+    resolved_route_sql = _http_route_norm_sql(_RESOLVED_HTTP_ROUTE_SQL)
+
+    query = f"""
+    SELECT
+        count() AS total_requests,
+        countIf({_HTTP_ERROR_SQL}) AS total_errors
+    FROM spans
+    WHERE org_id = %(org_id)s
+      AND project_id = %(project_id)s
+      AND {_SPANS_BASE_FILTER}
+      AND {time_filter}
+      {env_sql}
+      AND upperUTF8(trim({resolved_method_sql})) = %(method)s
+      AND {resolved_route_sql} = %(route)s
+    """
+
+    empty = EndpointStats(route=route_norm, method=method_norm, count=0, error_rate=0.0)
+
+    try:
+        result = await ch_query(query, parameters=params)
+    except RuntimeError:
+        logger.warning("ClickHouse unavailable, returning empty endpoint stats")
+        return empty
+    except Exception:
+        logger.exception("ClickHouse query failed for endpoint stats")
+        return empty
+
+    if not result.result_rows:
+        return empty
+
+    total_requests, total_errors = result.result_rows[0]
+    total_requests = int(total_requests or 0)
+    total_errors = int(total_errors or 0)
+    error_rate = round((total_errors / total_requests) * 100, 2) if total_requests > 0 else 0.0
+
+    return EndpointStats(
+        route=route_norm,
+        method=method_norm,
+        count=total_requests,
+        error_rate=error_rate,
+    )
+
+
 def _build_latency_buckets() -> list[LatencyBucket]:
     """Build default latency distribution buckets."""
     return [
