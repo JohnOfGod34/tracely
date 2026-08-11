@@ -221,6 +221,10 @@ async def test_get_span_history_filters_by_endpoint_search(org_id, project_id):
     # Search must fall back to span_name when http_route is empty (matches
     # the Live page display/client-filter behavior), not just raw http_route.
     assert "span_name" in query_str
+    # Search must also match on HTTP method (e.g. "POST"), and normalize a
+    # missing leading slash on the route before comparing.
+    assert "http_method" in query_str
+    assert "startsWith" in query_str
 
 
 @pytest.mark.asyncio

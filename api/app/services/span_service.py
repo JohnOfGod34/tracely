@@ -6,7 +6,7 @@ from datetime import datetime
 from app.db.clickhouse import ch_query
 from app.schemas.span import SpanDetail, build_span_detail
 from app.schemas.stream import SpanSummary, TraceSpan
-from app.services.dashboard_service import _RESOLVED_HTTP_ROUTE_SQL
+from app.services.dashboard_service import _RAW_HTTP_METHOD_SQL, _RESOLVED_HTTP_ROUTE_SQL
 
 # Columns to select for span history (matches SpanSummary fields)
 _HISTORY_COLUMNS = [
@@ -53,11 +53,13 @@ async def get_span_history(
         limit: Max rows to return.
         service: Filter by service_name (exact match).
         status_groups: Filter by HTTP status code groups (e.g. ["4xx", "5xx"]).
-        endpoint_search: Filter by resolved route substring (case-insensitive).
-            Falls back to span_name when http_route is empty, matching the
-            display logic in StreamRow and dashboard_service's top-endpoints
-            query — otherwise a route only visible via span_name (e.g. spans
-            without an OTEL route template) is unsearchable.
+        endpoint_search: Case-insensitive substring search against
+            "METHOD /route", matching what StreamRow displays. Falls back to
+            span_name when http_route is empty (same resolution as
+            dashboard_service's top-endpoints query), and normalizes a
+            missing leading slash before comparing — some instrumentation
+            stores routes without one, which otherwise makes an exact route
+            search fail even though a broader substring search finds it.
     """
     where_clauses = [
         "org_id = %(org_id)s",
@@ -97,8 +99,23 @@ async def get_span_history(
             where_clauses.append(f"({' OR '.join(range_conditions)})")
 
     if endpoint_search:
+        # "METHOD /route" — mirrors StreamRow's display exactly, and always
+        # has a leading slash regardless of whether the stored route does
+        # (some instrumentation omits it; _normalize_http_route papers over
+        # the same gap for the top-endpoints widget).
+        searchable_sql = f"""
+        concat(
+            ({_RAW_HTTP_METHOD_SQL}),
+            ' ',
+            multiIf(
+                startsWith(({_RESOLVED_HTTP_ROUTE_SQL}), '/'), ({_RESOLVED_HTTP_ROUTE_SQL}),
+                ({_RESOLVED_HTTP_ROUTE_SQL}) = '', '/',
+                concat('/', ({_RESOLVED_HTTP_ROUTE_SQL}))
+            )
+        )
+        """
         where_clauses.append(
-            f"positionCaseInsensitive(({_RESOLVED_HTTP_ROUTE_SQL}), %(endpoint_search)s) > 0"
+            f"positionCaseInsensitive(({searchable_sql}), %(endpoint_search)s) > 0"
         )
         params["endpoint_search"] = endpoint_search
 
