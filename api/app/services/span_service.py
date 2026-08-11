@@ -6,6 +6,7 @@ from datetime import datetime
 from app.db.clickhouse import ch_query
 from app.schemas.span import SpanDetail, build_span_detail
 from app.schemas.stream import SpanSummary, TraceSpan
+from app.services.dashboard_service import _RESOLVED_HTTP_ROUTE_SQL
 
 # Columns to select for span history (matches SpanSummary fields)
 _HISTORY_COLUMNS = [
@@ -52,7 +53,11 @@ async def get_span_history(
         limit: Max rows to return.
         service: Filter by service_name (exact match).
         status_groups: Filter by HTTP status code groups (e.g. ["4xx", "5xx"]).
-        endpoint_search: Filter by http_route substring (case-insensitive).
+        endpoint_search: Filter by resolved route substring (case-insensitive).
+            Falls back to span_name when http_route is empty, matching the
+            display logic in StreamRow and dashboard_service's top-endpoints
+            query — otherwise a route only visible via span_name (e.g. spans
+            without an OTEL route template) is unsearchable.
     """
     where_clauses = [
         "org_id = %(org_id)s",
@@ -92,7 +97,9 @@ async def get_span_history(
             where_clauses.append(f"({' OR '.join(range_conditions)})")
 
     if endpoint_search:
-        where_clauses.append("positionCaseInsensitive(http_route, %(endpoint_search)s) > 0")
+        where_clauses.append(
+            f"positionCaseInsensitive(({_RESOLVED_HTTP_ROUTE_SQL}), %(endpoint_search)s) > 0"
+        )
         params["endpoint_search"] = endpoint_search
 
     where_sql = " AND ".join(where_clauses)

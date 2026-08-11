@@ -218,6 +218,9 @@ async def test_get_span_history_filters_by_endpoint_search(org_id, project_id):
     params = mock_ch_query.call_args[1]["parameters"]
     assert "positionCaseInsensitive" in query_str
     assert params["endpoint_search"] == "/api/users"
+    # Search must fall back to span_name when http_route is empty (matches
+    # the Live page display/client-filter behavior), not just raw http_route.
+    assert "span_name" in query_str
 
 
 @pytest.mark.asyncio
